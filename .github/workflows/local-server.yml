@@ -1,0 +1,43 @@
+name: Local server build
+on:
+  push:
+    branches: [codex/kiosk-diag1]
+    paths: ['server/**', '.github/workflows/local-server.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  server:
+    runs-on: windows-2025-vs2026
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Check Python and run tests
+        working-directory: server
+        run: |
+          python --version
+          python -m unittest -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build standalone executable
+        working-directory: server
+        run: |
+          python -m pip install pyinstaller==6.16.0
+          python -m PyInstaller --clean --noconfirm --onefile --name sc-local-server --add-data "dashboard.html;." server.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python test_packaged.py dist/sc-local-server.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Assemble release
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release/source, release/licenses | Out-Null
+          Copy-Item server/dist/sc-local-server.exe, server/Start-Server.cmd, server/README.md, LICENSE release/
+          Copy-Item server/server.py, server/dashboard.html, server/test_server.py, server/test_packaged.py release/source/
+          python server/package_licenses.py release/licenses
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: SC-Local-Server-0.1.0-Windows
+          path: release/
+          if-no-files-found: error
+          retention-days: 30
