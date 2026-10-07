@@ -216,6 +216,41 @@ static void __fastcall Hook_RetrieveVehicle(uintptr_t asop, uintptr_t slot);
 static bool PrepareEntitlementsResult(uint8_t* target);
 static bool PrepareRetrieveVehicle(uint8_t* target);
 
+// Verified against client 4.10.193.11644 (CL 12660092). Observe only:
+// never retain engine objects or fabricate completion of an outstanding future.
+using FleetStageFn = uintptr_t(__fastcall*)(uintptr_t, uintptr_t);
+static FleetStageFn g_origFleetFetch = nullptr;
+static FleetStageFn g_origFleetBuild = nullptr;
+static volatile LONG g_fleetFetches = 0;
+static volatile LONG g_fleetBuilds = 0;
+static uintptr_t __fastcall Hook_FleetFetch(uintptr_t self, uintptr_t request) {
+    const LONG n = InterlockedIncrement(&g_fleetFetches);
+    int type = -1;
+    __try { if (request) type = Rd<int>(request + 0x10); }
+    __except (EXCEPTION_EXECUTE_HANDLER) {}
+    if (n <= 20) Log("[fleet-trace] fetch entry #%ld: type=%d (unreadable=-1)", n, type);
+    const uintptr_t result = g_origFleetFetch(self, request);
+    if (n <= 20) Log("[fleet-trace] fetch returned #%ld (not async completion)", n);
+    return result;
+}
+static uintptr_t __fastcall Hook_FleetBuild(uintptr_t self, uintptr_t response) {
+    const LONG n = InterlockedIncrement(&g_fleetBuilds);
+    if (n <= 20) Log("[fleet-trace] list builder entry #%ld", n);
+    const uintptr_t result = g_origFleetBuild(self, response);
+    if (n <= 20) Log("[fleet-trace] list builder returned #%ld", n);
+    return result;
+}
+static bool PrepareFleetFetch(uint8_t* target) {
+    const uint8_t* msg = FindCString(g_rdata, "Fetching player vehicle list");
+    return msg && BytesMatch(target + 0x2D, "4C 8D 0D")
+        && target + 0x34 + Rel32(target + 0x30) == msg;
+}
+static bool PrepareFleetBuild(uint8_t* target) {
+    const uint8_t* msg = FindCString(g_rdata, "Building ASOP Vehicle List");
+    return msg && BytesMatch(target + 0x123E, "4C 8D 05")
+        && target + 0x1245 + Rel32(target + 0x1241) == msg;
+}
+
 struct HookSpec {
     const char*   name;
     const char*   pattern;
@@ -226,6 +261,12 @@ struct HookSpec {
 };
 
 static const HookSpec kHooks[] = {
+    { "fleet fetch request trace",
+      "48 89 4C 24 08 55 53 57 41 54 41 56 48 8D AC 24 00 FD FF FF 48 81 EC 00 04 00 00",
+      5, reinterpret_cast<void*>(&Hook_FleetFetch), reinterpret_cast<void**>(&g_origFleetFetch), &PrepareFleetFetch },
+    { "fleet list builder trace",
+      "48 8B C4 48 89 50 10 48 89 48 08 55 53 56 57 41 54 41 55 41 56 41 57 48 8D A8 28 F7 FF FF 48 81 EC 98 09 00 00 33 DB",
+      7, reinterpret_cast<void*>(&Hook_FleetBuild), reinterpret_cast<void**>(&g_origFleetBuild), &PrepareFleetBuild },
     { "inventory filter validator",
       "48 89 5C 24 18 48 89 74 24 20 57 48 83 EC 20 49 89 50 28 49 8B F8 41 8B 41 1C 48 8B DA",
       5, reinterpret_cast<void*>(&Hook_ValidateFilter), reinterpret_cast<void**>(&g_origValidateFilter), nullptr },
@@ -484,10 +525,11 @@ void ProcessFleetDiagnostics(DWORD now) {
     started = true;
     last = now;
     ++samples;
-    Log("[fleet-diag] sample %u: entitlement_callbacks=%ld fallback_replies=%ld retrieve_callbacks=%ld",
+    Log("[fleet-diag] sample %u: entitlement_callbacks=%ld fallback_replies=%ld retrieve_callbacks=%ld fetch_entries=%ld list_builds=%ld",
         samples, InterlockedCompareExchange(&g_fleetCallbacks, 0, 0),
-        InterlockedCompareExchange(&g_fleetFallbacks, 0, 0), InterlockedCompareExchange(&g_fleetRetrieves, 0, 0));
-    if (samples == 1) Log("[fleet-diag] zero callbacks means no response observed; this build does not hook query initiation or fabricate a pending callback");
+        InterlockedCompareExchange(&g_fleetFallbacks, 0, 0), InterlockedCompareExchange(&g_fleetRetrieves, 0, 0),
+        InterlockedCompareExchange(&g_fleetFetches, 0, 0), InterlockedCompareExchange(&g_fleetBuilds, 0, 0));
+    if (samples == 1) Log("[fleet-diag] trace observes fetch entry, response, and list builder separately; fetch return is not async completion");
 }
 
 static int SlotShipIndex(uintptr_t slot) {
