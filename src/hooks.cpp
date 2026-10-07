@@ -247,6 +247,58 @@ static uintptr_t __fastcall Hook_ATCResolve(uintptr_t out, uintptr_t id) {
     TraceResolvedHandle("ATC resolution", out);
     return result;
 }
+// Observe the exact virtual call used by OnRequestOpen, without making an
+// extra authority query or changing its result. RCX/RDX/R8/R9 are forwarded.
+static const uint8_t* g_terminalBranchFlag = nullptr;
+static PatchStatus g_terminalBranchStatus;
+static uint8_t __fastcall Hook_TerminalBranch(uintptr_t entity, uintptr_t table,
+                                             uintptr_t arg3, uintptr_t arg4) {
+    using Fn = uint8_t(__fastcall*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t);
+    const auto original = reinterpret_cast<Fn>(Rd<uintptr_t>(table + 0x7A8));
+    const uint8_t result = original(entity, table, arg3, arg4);
+    if (t_terminalTrace) {
+        int flag = -1;
+        __try { if (g_terminalBranchFlag) flag = *g_terminalBranchFlag; }
+        __except (EXCEPTION_EXECUTE_HANDLER) {}
+        Log("[terminal-branch] open #%ld virtual_7a8=%u client_path_flag=%d (observation only)",
+            t_terminalTrace, static_cast<unsigned>(result), flag);
+    }
+    return result;
+}
+
+static void InstallTerminalBranchTrace(const Section& text) {
+    PatchStatus& st = g_terminalBranchStatus;
+    st.expected = 1;
+    // Includes the saved channel, original six-byte indirect CALL, and both
+    // result/channel tests. No RIP-relative instruction is moved to the relay.
+    uint8_t* anchor = FindUniquePattern(text,
+        "48 8B 4E 08 49 23 CC 89 85 D0 00 00 00 48 8B 11 FF 92 A8 07 00 00 84 C0 0F 84 E7 02 00 00 8B BD D0 00 00 00 85 FF 0F 85 94 02 00 00", st.sites);
+    if (!anchor) { st.result = st.sites ? PatchResult::WrongMatchCount : PatchResult::NotFound; return; }
+    uint8_t* flagTest = anchor + 0x305;
+    if (flagTest + 13 > text.base + text.size ||
+        !BytesMatch(flagTest, "80 3D AB 2C 21 05 00 0F 84 50 04 00 00")) {
+        st.result = PatchResult::NotFound; return;
+    }
+    uint8_t* call = anchor + 16;
+    if (!g_cave || g_cave + 16 > g_caveEnd) { st.result = PatchResult::ProtectFailed; return; }
+    uint8_t* relay = g_cave;
+    const int64_t distance = reinterpret_cast<int64_t>(relay) - reinterpret_cast<int64_t>(call + 5);
+    if (distance < INT32_MIN || distance > INT32_MAX) { st.result = PatchResult::ProtectFailed; return; }
+    const auto detour = &Hook_TerminalBranch;
+    relay[0] = 0xFF; relay[1] = 0x25; memset(relay + 2, 0, 4);
+    memcpy(relay + 6, &detour, 8);
+    FlushInstructionCache(GetCurrentProcess(), relay, 14);
+    g_cave += 16;
+    const int32_t rel32 = static_cast<int32_t>(distance);
+    uint8_t patch[6] = { 0xE8, 0, 0, 0, 0, 0x90 };
+    memcpy(patch + 1, &rel32, 4);
+    g_terminalBranchFlag = flagTest + 7 + Rel32(flagTest + 2);
+    if (!WriteCode(call, patch, sizeof(patch), st.err)) { st.result = PatchResult::ProtectFailed; return; }
+    st.result = PatchResult::Applied;
+    st.at = call;
+    g_hooksInstalled = true;
+}
+
 static FleetStageFn g_origTerminalOpen = nullptr;
 static volatile LONG g_terminalOpens = 0;
 static void TraceTerminalState(uintptr_t self, uintptr_t request, LONG n, const char* phase) {
@@ -379,9 +431,11 @@ void InstallHooks(const Section& text) {
         st.at = target;
         g_hooksInstalled = true;
     }
+    InstallTerminalBranchTrace(text);
 }
 
 void LogHooks() {
+    LogPatch("terminal branch result trace", g_terminalBranchStatus);
     for (size_t i = 0; i < sizeof(kHooks) / sizeof(kHooks[0]); ++i)
         LogPatch(kHooks[i].name, g_hookStatus[i]);
 }
