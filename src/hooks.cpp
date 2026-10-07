@@ -219,6 +219,34 @@ static bool PrepareRetrieveVehicle(uint8_t* target);
 // Verified against client 4.10.193.11644 (CL 12660092). Observe only:
 // never retain engine objects or fabricate completion of an outstanding future.
 using FleetStageFn = uintptr_t(__fastcall*)(uintptr_t, uintptr_t);
+static thread_local LONG t_terminalTrace = 0;
+using ChannelLookupFn = unsigned(__fastcall*)(uintptr_t, uintptr_t);
+static ChannelLookupFn g_origChannelLookup = nullptr;
+static FleetStageFn g_origPlayerResolve = nullptr;
+static FleetStageFn g_origATCResolve = nullptr;
+static unsigned __fastcall Hook_ChannelLookup(uintptr_t player, uintptr_t arg) {
+    const unsigned result = g_origChannelLookup(player, arg);
+    if (t_terminalTrace) Log("[terminal-detail] open #%ld player_channel=%u", t_terminalTrace, result);
+    return result;
+}
+static void TraceResolvedHandle(const char* label, uintptr_t out) {
+    if (!t_terminalTrace) return;
+    bool readable = false, nonzero = false;
+    __try { if (out) { nonzero = Rd<uint64_t>(out) != 0; readable = true; } }
+    __except (EXCEPTION_EXECUTE_HANDLER) {}
+    Log("[terminal-detail] open #%ld %s: readable=%d handle_nonzero=%d (not a validity check)",
+        t_terminalTrace, label, readable ? 1 : 0, nonzero ? 1 : 0);
+}
+static uintptr_t __fastcall Hook_PlayerResolve(uintptr_t out, uintptr_t id) {
+    const uintptr_t result = g_origPlayerResolve(out, id);
+    TraceResolvedHandle("player resolution", out);
+    return result;
+}
+static uintptr_t __fastcall Hook_ATCResolve(uintptr_t out, uintptr_t id) {
+    const uintptr_t result = g_origATCResolve(out, id);
+    TraceResolvedHandle("ATC resolution", out);
+    return result;
+}
 static FleetStageFn g_origTerminalOpen = nullptr;
 static volatile LONG g_terminalOpens = 0;
 static void TraceTerminalState(uintptr_t self, uintptr_t request, LONG n, const char* phase) {
@@ -238,7 +266,11 @@ static void TraceTerminalState(uintptr_t self, uintptr_t request, LONG n, const 
 static uintptr_t __fastcall Hook_TerminalOpen(uintptr_t self, uintptr_t request) {
     const LONG n = InterlockedIncrement(&g_terminalOpens);
     if (n <= 20) TraceTerminalState(self, request, n, "entry");
-    const uintptr_t result = g_origTerminalOpen(self, request);
+    const LONG previousTrace = t_terminalTrace;
+    uintptr_t result = 0;
+    t_terminalTrace = n <= 20 ? n : 0;
+    __try { result = g_origTerminalOpen(self, request); }
+    __finally { t_terminalTrace = previousTrace; }
     // Do not dereference engine objects after the call: it may invalidate them.
     if (n <= 20) Log("[terminal-trace] open #%ld returned (not async completion)", n);
     return result;
@@ -289,7 +321,17 @@ struct HookSpec {
     bool      (*prepare)(uint8_t* target);
 };
 
+// Exact client-build helper signatures; RIP-relative bytes are matched, not relocated.
 static const HookSpec kHooks[] = {
+    { "terminal player resolution trace",
+      "40 53 57 48 83 EC 28 48 8B D9 48 8B 0D F7 8D 9C 09 48 8B 01 FF 90 20 01 00 00 48 8B F8 48 85 C0 74 70 48 8B 10 B8 FF FF 00 00 0F B7 0D C7 9C 6F",
+      7, reinterpret_cast<void*>(&Hook_PlayerResolve), reinterpret_cast<void**>(&g_origPlayerResolve), nullptr },
+    { "terminal ATC resolution trace",
+      "40 53 57 48 83 EC 28 48 8B D9 48 8B 0D E7 52 0E 07 48 8B 01 FF 90 20 01 00 00 48 8B F8 48 85 C0 74 70 48 8B 10 B8 FF FF 00 00 0F B7 0D 6F 52 EE",
+      7, reinterpret_cast<void*>(&Hook_ATCResolve), reinterpret_cast<void**>(&g_origATCResolve), nullptr },
+    { "terminal player channel trace",
+      "48 89 5C 24 08 55 56 57 48 83 EC 30 48 8B E9 48 8B 0D 82 37 D1 04 48 8B 01 FF 90 20 01 00 00 48 8B D8 48 85",
+      5, reinterpret_cast<void*>(&Hook_ChannelLookup), reinterpret_cast<void**>(&g_origChannelLookup), nullptr },
     { "ship terminal open trace",
       "48 89 54 24 10 55 53 56 57 41 54 41 55 41 57 48 8D 6C 24 80 48 81 EC 80 01 00 00 45 33 ED 48 8B F1",
       5, reinterpret_cast<void*>(&Hook_TerminalOpen), reinterpret_cast<void**>(&g_origTerminalOpen), &PrepareTerminalOpen },

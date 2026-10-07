@@ -1,7 +1,7 @@
-# Kiosk diagnostic 3
+# Diagnostic 4
 
-Adds an observation-only hook to CEntityComponentShipInsuranceProvider::OnRequestOpen. The signature and NO ATC string reference are verified against the supplied 4.10.193.11644 executable. The first 5 bytes are one complete stack-store instruction.
+Observes player resolution, ATC resolution, and player-channel lookup only while a traced terminal-open call is executing on the same thread. Resolving a nonzero handle does not establish validity. No calls are forced or replayed, no state is changed by the new traces, and thread-local scope is restored on exceptional exits.
 
-Logs whether the incoming request handle and terminal ATC link are nonzero. Nonzero does not establish validity. No object is retained, no state changed, and no completion is fabricated by this new hook. Existing diag2 behavior is retained. Hangars/inventory are not fixed.
+Helper signatures and complete stolen instructions were verified against client 4.10.193.11644. Existing diag3 behavior is retained. This is not a kiosk/hangar/inventory fix and has not been tested in-game.
 
-Replace only dinput8.dll beside the 0.6.1 launcher, keeping a backup. Open a ship terminal, wait 45 seconds, exit, and return data/mod.log. This build remains untested in-game.
+Replace only dinput8.dll beside the 0.6.1 launcher. Open a ship terminal, wait 45 seconds, exit, and send data/mod.log.
