@@ -219,6 +219,35 @@ static bool PrepareRetrieveVehicle(uint8_t* target);
 // Verified against client 4.10.193.11644 (CL 12660092). Observe only:
 // never retain engine objects or fabricate completion of an outstanding future.
 using FleetStageFn = uintptr_t(__fastcall*)(uintptr_t, uintptr_t);
+static FleetStageFn g_origTerminalOpen = nullptr;
+static volatile LONG g_terminalOpens = 0;
+static void TraceTerminalState(uintptr_t self, uintptr_t request, LONG n, const char* phase) {
+    bool readable = false;
+    bool requestHandle = false;
+    bool atcLink = false;
+    __try {
+        if (self && request) {
+            requestHandle = Rd<uint64_t>(request) != 0;
+            atcLink = Rd<uint64_t>(self + 0x9F8) != 0;
+            readable = true;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    Log("[terminal-trace] open #%ld %s: readable=%d request_handle_nonzero=%d atc_link_nonzero=%d (nonzero is not validity)",
+        n, phase, readable ? 1 : 0, requestHandle ? 1 : 0, atcLink ? 1 : 0);
+}
+static uintptr_t __fastcall Hook_TerminalOpen(uintptr_t self, uintptr_t request) {
+    const LONG n = InterlockedIncrement(&g_terminalOpens);
+    if (n <= 20) TraceTerminalState(self, request, n, "entry");
+    const uintptr_t result = g_origTerminalOpen(self, request);
+    // Do not dereference engine objects after the call: it may invalidate them.
+    if (n <= 20) Log("[terminal-trace] open #%ld returned (not async completion)", n);
+    return result;
+}
+static bool PrepareTerminalOpen(uint8_t* target) {
+    const uint8_t* msg = FindCString(g_rdata, "[NO ATC] $$ [$$] - NO LINK TO ATC - Verify and export OC: $$");
+    return msg && BytesMatch(target + 0x1A9, "4C 8D 0D")
+        && target + 0x1B0 + Rel32(target + 0x1AC) == msg;
+}
 static FleetStageFn g_origFleetFetch = nullptr;
 static FleetStageFn g_origFleetBuild = nullptr;
 static volatile LONG g_fleetFetches = 0;
@@ -261,6 +290,9 @@ struct HookSpec {
 };
 
 static const HookSpec kHooks[] = {
+    { "ship terminal open trace",
+      "48 89 54 24 10 55 53 56 57 41 54 41 55 41 57 48 8D 6C 24 80 48 81 EC 80 01 00 00 45 33 ED 48 8B F1",
+      5, reinterpret_cast<void*>(&Hook_TerminalOpen), reinterpret_cast<void**>(&g_origTerminalOpen), &PrepareTerminalOpen },
     { "fleet fetch request trace",
       "48 89 4C 24 08 55 53 57 41 54 41 56 48 8D AC 24 00 FD FF FF 48 81 EC 00 04 00 00",
       5, reinterpret_cast<void*>(&Hook_FleetFetch), reinterpret_cast<void**>(&g_origFleetFetch), &PrepareFleetFetch },
@@ -525,10 +557,10 @@ void ProcessFleetDiagnostics(DWORD now) {
     started = true;
     last = now;
     ++samples;
-    Log("[fleet-diag] sample %u: entitlement_callbacks=%ld fallback_replies=%ld retrieve_callbacks=%ld fetch_entries=%ld list_builds=%ld",
+    Log("[fleet-diag] sample %u: entitlement_callbacks=%ld fallback_replies=%ld retrieve_callbacks=%ld fetch_entries=%ld list_builds=%ld terminal_opens=%ld",
         samples, InterlockedCompareExchange(&g_fleetCallbacks, 0, 0),
         InterlockedCompareExchange(&g_fleetFallbacks, 0, 0), InterlockedCompareExchange(&g_fleetRetrieves, 0, 0),
-        InterlockedCompareExchange(&g_fleetFetches, 0, 0), InterlockedCompareExchange(&g_fleetBuilds, 0, 0));
+        InterlockedCompareExchange(&g_fleetFetches, 0, 0), InterlockedCompareExchange(&g_fleetBuilds, 0, 0), InterlockedCompareExchange(&g_terminalOpens, 0, 0));
     if (samples == 1) Log("[fleet-diag] trace observes fetch entry, response, and list builder separately; fetch return is not async completion");
 }
 
