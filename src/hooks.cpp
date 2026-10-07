@@ -1,4 +1,5 @@
 #include "hooks.h"
+#include "fleet_response_policy.h"
 #include "teleport.h"
 #include <initializer_list>
 #include <nmmintrin.h>
@@ -301,6 +302,11 @@ static int        g_shipCount = 0;
 static uint8_t*   g_fakeEntitlements = nullptr;
 static SRWLOCK    g_shipsLock = SRWLOCK_INIT;
 static bool       g_shipsBuilt = false;
+static bool       g_fleetAttempted = false;
+static DWORD      g_lastFleetAttempt = 0;
+static volatile LONG g_fleetCallbacks = 0;
+static volatile LONG g_fleetFallbacks = 0;
+static volatile LONG g_fleetRetrieves = 0;
 
 using StrCtorFn          = void*(__fastcall*)(void* out, const char* s);
 using StrDtorFn          = void(__fastcall*)(void* s);
@@ -419,9 +425,20 @@ static int BuildFleetShips() {
 
 static int EnsureFleetShips() {
     AcquireSRWLockExclusive(&g_shipsLock);
-    if (!g_shipsBuilt) {
-        g_shipsBuilt = true;
-        __try { BuildFleetShips(); } __except (EXCEPTION_EXECUTE_HANDLER) { g_shipCount = 0; Log("[fleet] fault while building the ship list"); }
+    const DWORD now = GetTickCount();
+    // An early callback can arrive before entity classes exist. Do not cache failure forever.
+    if (!g_shipsBuilt && (!g_fleetAttempted || now - g_lastFleetAttempt >= 3000)) {
+        g_fleetAttempted = true;
+        g_lastFleetAttempt = now;
+        g_shipCount = 0;
+        if (g_fakeEntitlements) { free(g_fakeEntitlements); g_fakeEntitlements = nullptr; }
+        __try { BuildFleetShips(); }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            g_shipCount = 0;
+            Log("[fleet] fault building offline ship list; eligible to retry on a later response");
+        }
+        g_shipsBuilt = g_shipCount > 0 && g_fakeEntitlements != nullptr;
+        if (!g_shipsBuilt) Log("[fleet] ship list not ready; next returned query can retry after 3 seconds");
     }
     const int n = g_shipCount;
     ReleaseSRWLockExclusive(&g_shipsLock);
@@ -429,17 +446,48 @@ static int EnsureFleetShips() {
 }
 
 static void __fastcall Hook_EntitlementsResult(uintptr_t self, uintptr_t result) {
-    bool failed = false;
-    __try { failed = Rd<uint8_t>(result) != 1; } __except (EXCEPTION_EXECUTE_HANDLER) {}
-    const int n = failed ? EnsureFleetShips() : 0;
+    const LONG callback = InterlockedIncrement(&g_fleetCallbacks);
+    bool readable = false;
+    uint8_t status = 0;
+    uintptr_t begin = 0, end = 0;
+    __try {
+        if (result) {
+            status = Rd<uint8_t>(result);
+            // Only success replies have the vector layout already used by this hook's fallback.
+            if (status == 1) {
+                begin = Rd<uintptr_t>(result + 8);
+                end = Rd<uintptr_t>(result + 16);
+            }
+            readable = true;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    const auto response = fleetpolicy::Classify(readable, status, begin, end);
+    if (callback <= 20) Log("[fleet] entitlement callback #%ld: readable=%d status=%u category=%d (0 unreadable, 1 failed, 2 empty, 3 populated, 4 invalid range)",
+        callback, readable ? 1 : 0, static_cast<unsigned>(status), static_cast<int>(response));
+    const int n = fleetpolicy::NeedsFallback(response) ? EnsureFleetShips() : 0;
     if (!n) { g_origEntitlementsResult(self, result); return; }
     struct { uint8_t ok; uint8_t pad[7]; uint8_t* begin; uint8_t* end; uint8_t* cap; uint8_t spare[64]; } fake = {};
     fake.ok = 1;
     fake.begin = g_fakeEntitlements;
     fake.end = fake.cap = g_fakeEntitlements + n * kEntitlementSize;
-    static volatile LONG reported = 0;
-    if (InterlockedIncrement(&reported) <= 3) Log("[fleet] online ship list unavailable -> listing %d offline ships", n);
+    const LONG fallback = InterlockedIncrement(&g_fleetFallbacks);
+    if (fallback <= 20) Log("[fleet] returned %s list -> supplying %d offline catalogue ships",
+        response == fleetpolicy::Response::Empty ? "empty" : "failed", n);
     g_origEntitlementsResult(self, reinterpret_cast<uintptr_t>(&fake));
+}
+
+void ProcessFleetDiagnostics(DWORD now) {
+    static DWORD last = 0;
+    static bool started = false;
+    static unsigned samples = 0;
+    if (samples >= 40 || (started && now - last < 15000)) return;
+    started = true;
+    last = now;
+    ++samples;
+    Log("[fleet-diag] sample %u: entitlement_callbacks=%ld fallback_replies=%ld retrieve_callbacks=%ld",
+        samples, InterlockedCompareExchange(&g_fleetCallbacks, 0, 0),
+        InterlockedCompareExchange(&g_fleetFallbacks, 0, 0), InterlockedCompareExchange(&g_fleetRetrieves, 0, 0));
+    if (samples == 1) Log("[fleet-diag] zero callbacks means no response observed; this build does not hook query initiation or fabricate a pending callback");
 }
 
 static int SlotShipIndex(uintptr_t slot) {
@@ -479,6 +527,7 @@ const char* RequestShipFromAtc(uint64_t atcEntity, uint64_t player, const char* 
 }
 
 static void __fastcall Hook_RetrieveVehicle(uintptr_t asop, uintptr_t slot) {
+    InterlockedIncrement(&g_fleetRetrieves);
     const int i = SlotShipIndex(slot);
     if (i < 0) { g_origRetrieveVehicle(asop, slot); return; }
     uint64_t atc = 0;

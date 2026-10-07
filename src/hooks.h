@@ -10,3 +10,5 @@ uint8_t* NearData(size_t n);
 bool MakeCryString(void* out, const char* s);
 void FreeCryString(void* s);
 const char* RequestShipFromAtc(uint64_t atcEntity, uint64_t player, const char* shipClass);
+
+void ProcessFleetDiagnostics(DWORD now);

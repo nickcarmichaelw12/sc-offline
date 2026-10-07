@@ -139,6 +139,7 @@ static void OnMainThreadTick() {
     ProcessQuantum();
     ProcessMissions();
     ProcessContracts();
+    if (g_offline) ProcessFleetDiagnostics(now);
     ProcessAmmo();
     ProcessOutfits();
     TeleportTick(now);

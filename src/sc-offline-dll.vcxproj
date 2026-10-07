@@ -190,6 +190,7 @@
     <ClInclude Include="version.h" />
     <ClInclude Include="patches.h" />
     <ClInclude Include="hooks.h" />
+    <ClInclude Include="fleet_response_policy.h" />
     <ClInclude Include="teleport.h" />
     <ClInclude Include="spawner.h" />
     <ClInclude Include="loadout.h" />
