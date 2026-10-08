@@ -35,6 +35,9 @@ jobs:
       - name: Release manifest tests
         run: python3 tools/test_release_manifest.py
 
+      - name: Bridge protocol tests
+        run: g++ -std=c++20 -Wall -Wextra -Werror tests/bridge_protocol_test.cpp -o /tmp/bridge-protocol-test && /tmp/bridge-protocol-test
+
   build:
     needs: check
     # Pinned: the project builds with the v145 toolset, which this image carries (VS 2026).
@@ -52,6 +55,13 @@ jobs:
 
       - name: Build (Release x64)
         run: msbuild sc-offline.slnx /p:Configuration=Release /p:Platform=x64 /m
+
+      - name: Native bridge transport test
+        run: |
+          msbuild tests/bridge_client.vcxproj /p:Configuration=Release /p:Platform=x64 /m
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python server/test_native_bridge.py x64/BridgeTests/bridge_client.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # Release|x64 links with GenerateDebugInformation=false, so there is no PDB to upload.
       - name: Upload DLL + launcher artifact

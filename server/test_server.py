@@ -7,6 +7,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 from server import Store, Server, Problem
 
@@ -104,17 +105,41 @@ class StateTests(unittest.TestCase):
 
     def test_future_schema_is_rejected_without_rewrite(self):
         with closing(self.store.connect()) as db:
-            db.execute('PRAGMA user_version=2')
+            db.execute('PRAGMA user_version=3')
         with self.assertRaises(RuntimeError):
             Store(self.path)
         with closing(self.store.connect()) as db:
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 2)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 3)
 
     def test_strict_integer_and_limits(self):
         for value in [True, '1', 0.5, 9000000000001]:
             with self.assertRaises(Problem):
                 self.change('/wallet/adjust', {'delta': value, 'reason': 'invalid'})
         self.assertEqual(self.store.snapshot()['events'], [])
+
+    def test_bridge_recovery_requires_game_exit(self):
+        self.change('/demo', {})
+        self.change('/bridge/reserve', {'ship_id':'demo-gladius','expected_version':1,'operation_id':'d'*32})
+        with patch('server.sys.platform','win32'), patch('server.subprocess.run') as tasklist:
+            tasklist.return_value.stdout = '"StarCitizen.exe","1234"'
+            with self.assertRaises(Problem):
+                self.change('/bridge/recover', {'confirm_session_ended':True})
+            tasklist.return_value.stdout = 'No tasks match'
+            with self.assertRaises(Problem):
+                self.change('/bridge/recover', {})
+            self.change('/bridge/recover', {'confirm_session_ended':True})
+        self.assertEqual(self.store.snapshot()['bridge_operations'][0]['status'],'cancelled')
+        self.assertEqual(self.store.snapshot()['ships'][0]['state'],'stored')
+
+    def test_migrate_schema_one_preserves_existing_records(self):
+        self.change('/demo', {})
+        with closing(self.store.connect()) as db:
+            db.execute('DROP TABLE bridge_ops')
+            db.execute('PRAGMA user_version=1')
+        upgraded=Store(self.path).snapshot()
+        self.assertEqual(upgraded['schema_version'],2)
+        self.assertEqual(upgraded['profile']['credits'],100000)
+        self.assertEqual(len(upgraded['ships']),1)
 
 
 class HttpTests(unittest.TestCase):
@@ -173,6 +198,40 @@ class HttpTests(unittest.TestCase):
         status, body, _ = self.request('/api/v1/backup')
         self.assertEqual(status, 200)
         self.assertTrue(body.startswith(b'SQLite format 3'))
+
+    def test_bridge_protocol_and_reservation_confirmation(self):
+        self.store.mutate('/demo', {}, 'seed')
+        wire = self.request('/api/v1/bridge/fleet')[1].decode()
+        self.assertTrue(wire.startswith('SCBRIDGE1\n'))
+        self.assertIn('AEGS_Gladius'.encode().hex(), wire)
+        op = 'a'*32
+        req = {'ship_id':'demo-gladius','expected_version':1,'operation_id':op}
+        self.store.mutate('/bridge/reserve', req, 'reserve')
+        self.store.mutate('/bridge/reserve', req, 'reserve')
+        with self.assertRaises(Problem):
+            self.store.mutate('/bridge/reserve', {**req,'operation_id':'b'*32}, 'compete')
+        with self.assertRaises(Problem):
+            self.store.mutate('/ships/demo-gladius/transition', {'action':'deploy','expected_version':1}, 'manual')
+        self.assertEqual(self.store.snapshot()['ships'][0]['state'], 'stored')
+        result = {'operation_id':op,'entity_id':'12345'}
+        self.store.mutate('/bridge/confirm', result, 'confirm')
+        self.store.mutate('/bridge/confirm', result, 'confirm')
+        self.assertEqual(self.store.snapshot()['ships'][0]['version'], 2)
+        self.assertEqual(self.store.snapshot()['ships'][0]['state'], 'deployed')
+        with self.assertRaises(Problem):
+            self.store.mutate('/ships/demo-gladius/transition', {'action':'store','expected_version':2,'hangar_id':'demo-hangar'}, 'manual-store')
+
+    def test_bridge_cancel_and_restart_reservation(self):
+        self.store.mutate('/demo', {}, 'seed')
+        op='c'*32
+        self.store.mutate('/bridge/reserve', {'ship_id':'demo-gladius','expected_version':1,'operation_id':op}, 'reserve')
+        restart=Store(self.store.path)
+        self.assertEqual(restart.snapshot()['bridge_operations'][0]['status'], 'reserved')
+        with self.assertRaises(Problem):
+            restart.mutate('/bridge/confirm', {'operation_id':op,'entity_id':'0'}, 'invalid')
+        restart.mutate('/bridge/cancel', {'operation_id':op,'reason':'Test failure'}, 'cancel')
+        self.assertEqual(restart.snapshot()['ships'][0]['state'], 'stored')
+        self.assertEqual(restart.snapshot()['bridge_operations'][0]['status'], 'cancelled')
 
 
 if __name__ == '__main__':

@@ -165,6 +165,7 @@
     <ClCompile Include="hooks.cpp" />
     <ClCompile Include="teleport.cpp" />
     <ClCompile Include="spawner.cpp" />
+    <ClCompile Include="bridge.cpp" />
     <ClCompile Include="loadout.cpp" />
     <ClCompile Include="npc.cpp" />
     <ClCompile Include="build.cpp" />
@@ -193,6 +194,8 @@
     <ClInclude Include="fleet_response_policy.h" />
     <ClInclude Include="teleport.h" />
     <ClInclude Include="spawner.h" />
+    <ClInclude Include="bridge.h" />
+    <ClInclude Include="bridge_protocol.h" />
     <ClInclude Include="loadout.h" />
     <ClInclude Include="npc.h" />
     <ClInclude Include="build.h" />

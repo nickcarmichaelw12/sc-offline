@@ -12,11 +12,12 @@ from pathlib import Path
 import secrets
 import sqlite3
 import sys
+import subprocess
 import tempfile
 import uuid
 import webbrowser
 
-VERSION = '0.1.0'
+VERSION = '0.2.0'
 LIMIT = 64 * 1024
 MAX_CREDITS = 9_000_000_000_000
 
@@ -46,7 +47,7 @@ class Store:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(self.connect()) as db:
             version = db.execute('PRAGMA user_version').fetchone()[0]
-            if version not in (0, 1):
+            if version not in (0, 1, 2):
                 raise RuntimeError('Database schema is newer than this server. Keep the database and use the matching server.')
             db.execute('PRAGMA journal_mode=WAL')
             db.executescript('''
@@ -77,7 +78,13 @@ class Store:
                     operation TEXT NOT NULL, details TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS requests(
                     key TEXT PRIMARY KEY, digest TEXT NOT NULL, response TEXT NOT NULL);
-                PRAGMA user_version=1;
+                CREATE TABLE IF NOT EXISTS bridge_ops(
+                    id TEXT PRIMARY KEY, ship_id TEXT NOT NULL REFERENCES ships(id),
+                    status TEXT NOT NULL CHECK(status IN ('reserved','confirmed','cancelled')),
+                    entity_id TEXT, reason TEXT);
+                CREATE UNIQUE INDEX IF NOT EXISTS bridge_one_reservation
+                    ON bridge_ops(ship_id) WHERE status='reserved';
+                PRAGMA user_version=2;
                 COMMIT;
             ''')
 
@@ -98,10 +105,11 @@ class Store:
     def snapshot(self):
         with closing(self.connect()) as db:
             db.execute('BEGIN')
-            result = {'server_version': VERSION, 'schema_version': 1, 'game_connected': False}
+            result = {'server_version': VERSION, 'schema_version': 2, 'game_connected': False}
             result['profile'] = dict(db.execute('SELECT name, credits FROM profile WHERE id=1').fetchone())
             for table in ('locations', 'hangars', 'ships', 'inventory'):
                 result[table] = [dict(r) for r in db.execute(f'SELECT * FROM {table} ORDER BY rowid')]
+            result['bridge_operations'] = [dict(r) for r in db.execute('SELECT * FROM bridge_ops')]
             result['events'] = [dict(r) for r in db.execute('SELECT * FROM events ORDER BY sequence DESC LIMIT 100')]
             db.execute('COMMIT')
             return result
@@ -139,6 +147,46 @@ class Store:
                 raise
 
     def apply(self, db, op, data):
+        if op == '/bridge/recover':
+            if sys.platform != 'win32':
+                raise Problem(409, 'Session recovery requires the Windows server on the game PC.')
+            running = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq StarCitizen.exe', '/FO', 'CSV', '/NH'], capture_output=True, text=True, check=True)
+            if 'starcitizen.exe' in running.stdout.lower():
+                raise Problem(409, 'Close Star Citizen before recovering the offline session.')
+            if data.get('confirm_session_ended') is not True:
+                raise Problem(400, 'Explicit session-ended confirmation required.')
+            db.execute("UPDATE ships SET state='stored',location_id='offline-home',hangar_id=NULL,version=version+1 WHERE id IN (SELECT ship_id FROM bridge_ops WHERE status IN ('reserved','confirmed')) AND (state='deployed' OR id IN (SELECT ship_id FROM bridge_ops WHERE status='reserved'))")
+            db.execute("UPDATE bridge_ops SET status='cancelled',reason='User recovered after game exit' WHERE status='reserved'")
+            return {'recovered': True, 'note': 'Bridge ships returned to unmapped offline-home. No world entities restored.'}
+        if op == '/bridge/reserve':
+            ship = self.need(db, 'ships', text(data, 'ship_id'))
+            version = integer(data, 'expected_version', 1, 2**53-1)
+            identifier = text(data, 'operation_id', 64)
+            if len(identifier) != 32 or any(c not in '0123456789abcdef' for c in identifier):
+                raise Problem(400, 'operation_id must be 32 lowercase hex characters.')
+            if ship['state'] != 'stored' or ship['version'] != version:
+                raise Problem(409, 'Ship is not stored or its version has changed. Refresh the bridge.')
+            if db.execute("SELECT 1 FROM bridge_ops WHERE ship_id=? AND status='reserved'", (ship['id'],)).fetchone():
+                raise Problem(409, 'Ship already has an unresolved spawn reservation.')
+            db.execute("INSERT INTO bridge_ops(id,ship_id,status) VALUES(?,?,'reserved')", (identifier, ship['id']))
+            return {'operation_id': identifier, 'status': 'reserved'}
+        if op in ('/bridge/confirm', '/bridge/cancel'):
+            identifier = text(data, 'operation_id', 64)
+            row = db.execute('SELECT * FROM bridge_ops WHERE id=?', (identifier,)).fetchone()
+            if not row:
+                raise Problem(404, 'Spawn reservation not found.')
+            if row['status'] != 'reserved':
+                raise Problem(409, 'Spawn reservation already resolved. Retry with the original request key.')
+            if op == '/bridge/confirm':
+                entity = text(data, 'entity_id', 20)
+                if not entity.isascii() or not entity.isdecimal() or not 0 < int(entity) < 2**64:
+                    raise Problem(400, 'A nonzero 64-bit entity ID is required.')
+                db.execute("UPDATE ships SET state='deployed',location_id=NULL,hangar_id=NULL,version=version+1 WHERE id=?", (row['ship_id'],))
+                db.execute("UPDATE bridge_ops SET status='confirmed',entity_id=? WHERE id=?", (entity, identifier))
+                return {'operation_id': identifier, 'status': 'confirmed'}
+            reason = text(data, 'reason', 200)
+            db.execute("UPDATE bridge_ops SET status='cancelled',reason=? WHERE id=?", (reason, identifier))
+            return {'operation_id': identifier, 'status': 'cancelled'}
         if op == '/profile':
             name = text(data, 'name', 80)
             db.execute('UPDATE profile SET name=? WHERE id=1', (name,))
@@ -171,6 +219,10 @@ class Store:
         parts = op.strip('/').split('/')
         if len(parts) == 3 and parts[0] == 'ships' and parts[2] == 'transition':
             ship = self.need(db, 'ships', parts[1])
+            if ship['state'] == 'deployed' and db.execute("SELECT 1 FROM bridge_ops WHERE ship_id=? AND status='confirmed'", (ship['id'],)).fetchone():
+                raise Problem(409, 'This ship was spawned in game. Use Recover-Bridge after closing the game; live storage is not implemented.')
+            if db.execute("SELECT 1 FROM bridge_ops WHERE ship_id=? AND status='reserved'", (ship['id'],)).fetchone():
+                raise Problem(409, 'Ship has an unresolved game spawn. Do not change its state until reconciled.')
             version = integer(data, 'expected_version', 1, 2**53-1)
             if version != ship['version']:
                 raise Problem(409, 'Ship changed since this request was prepared. Refresh and retry.')
@@ -275,6 +327,17 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send(200, {'status': 'ok', 'version': VERSION, 'api_version': 1, 'game_connected': False})
                 if self.path == '/api/v1/state':
                     return self.send(200, self.server.store.snapshot())
+                if self.path == '/api/v1/bridge/fleet':
+                    state = self.server.store.snapshot()
+                    reserved = {r['ship_id'] for r in state['bridge_operations'] if r['status'] == 'reserved'}
+                    if len(state['ships']) > 256:
+                        raise Problem(409, 'This bridge supports at most 256 owned ships.')
+                    rows = ['SCBRIDGE1']
+                    for ship in state['ships']:
+                        fields = [ship['id'], ship['class_name'], ship['name'],
+                                  'reserved' if ship['id'] in reserved else ship['state']]
+                        rows.append('\t'.join(x.encode('utf-8').hex() for x in fields) + '\t' + str(ship['version']))
+                    return self.send(200, ('\n'.join(rows)+'\n').encode(), 'text/plain; charset=utf-8')
                 if self.path == '/api/v1/backup':
                     return self.send(200, self.server.store.backup(), 'application/octet-stream',
                                      {'Content-Disposition': 'attachment; filename="offline-backup.sqlite3"'})
@@ -323,6 +386,8 @@ def main():
     parser.add_argument('--port', type=int, default=18870)
     parser.add_argument('--data-dir', type=Path, default=root / 'data')
     parser.add_argument('--open', action='store_true', help='Open control page in your browser')
+    parser.add_argument('--link-mod', action='store_true', help='Choose your mod launcher folder and pair it with this server')
+    parser.add_argument('--recover-bridge', action='store_true', help='Recover bridge ships after closing the game')
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error('port must be between 1 and 65535')
@@ -338,6 +403,39 @@ def main():
         token = token_path.read_text(encoding='utf-8').strip()
     if len(token) != 64 or any(c not in '0123456789abcdef' for c in token):
         raise RuntimeError('api-token.txt is invalid. Close the server and remove only that token file to regenerate it.')
+    if args.link_mod or args.recover_bridge:
+        import tkinter as tk
+        from tkinter import filedialog
+        window = tk.Tk()
+        window.withdraw()
+        chosen = filedialog.askdirectory(title='Select the folder containing your sc-offline.exe launcher')
+        window.destroy()
+        if not chosen:
+            print('Pairing cancelled. No mod files changed.')
+            return
+        folder = Path(chosen)
+        if not (folder / 'sc-offline.exe').is_file():
+            raise RuntimeError('Select the mod launcher folder, not Star Citizen LIVE/Bin64.')
+        target = folder / 'data' / 'bridge.ini'
+        if args.recover_bridge:
+            # Require the selected mod to be paired to this database's token.
+            if not target.exists() or target.read_text(encoding='ascii').splitlines() != [str(args.port), token]:
+                raise RuntimeError('This mod is not paired to this server. No recovery performed.')
+            from tkinter import messagebox
+            if not messagebox.askyesno('Recover ended session', 'After closing the game, return bridge ships to Offline home and clear the pending journal? This does not restore physical ships or cargo.'):
+                return
+            Store(args.data_dir / 'offline.sqlite3').mutate('/bridge/recover', {'confirm_session_ended': True}, secrets.token_hex(16))
+            pending = folder / 'data' / 'bridge-pending.txt'
+            if pending.exists():
+                pending.rename(pending.with_name('bridge-recovered-'+secrets.token_hex(4)+'.txt'))
+            print('Recovered ended session. Pending journal archived; server ship records are available again.')
+            return
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_suffix('.tmp')
+        temporary.write_text(str(args.port)+'\n'+token+'\n', encoding='ascii')
+        temporary.replace(target)
+        print('Paired. Keep the server running, then use Local server fleet in the mod Vehicles tab.')
+        return
     page = (Path(__file__).resolve().parent / 'dashboard.html').read_text(encoding='utf-8')
     # Bind before opening SQLite: a second launch must not modify the active database.
     server = Server(('127.0.0.1', args.port), None, token, page)

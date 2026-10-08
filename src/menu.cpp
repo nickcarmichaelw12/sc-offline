@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include "spawner.h"
+#include "bridge.h"
 #include "cvars.h"
 #include "build.h"
 #include "third_party/imgui/imgui.h"
@@ -629,6 +630,26 @@ static void DrawTravelTab() {
 // =============================================================================================
 
 static void DrawVehiclesTab(bool& keepOpen) {
+    Section("Local server fleet");
+    static BridgeShip owned[256];
+    char bridgeStatus[256]; bool bridgeBusy = false;
+    int ownedCount = Bridge_Snapshot(owned, 256, bridgeStatus, sizeof(bridgeStatus), bridgeBusy);
+    ImGui::TextWrapped("%s", bridgeStatus);
+    if (ImGui::Button("Refresh server fleet")) Bridge_Refresh();
+    if (ImGui::BeginChild("##ownedFleet", ImVec2(0, ownedCount ? 160.0f : 30.0f), true)) {
+        for (int i = 0; i < ownedCount; ++i) {
+            ImGui::PushID(i);
+            ImGui::Text("%s (%s)", owned[i].name, owned[i].state);
+            ImGui::TextDisabled("%s", owned[i].cls);
+            ImGui::BeginDisabled(bridgeBusy || strcmp(owned[i].state, "stored") != 0);
+            if (ImGui::Button("Spawn owned ship")) { Bridge_RequestSpawn(owned[i]); bridgeBusy = true; }
+            ImGui::EndDisabled();
+            ImGui::Separator(); ImGui::PopID();
+        }
+        if (!ownedCount) ImGui::TextDisabled("No fleet loaded. Pair with server 0.2.0 and refresh.");
+    }
+    ImGui::EndChild();
+    Hint("Spawns 30 m above you. Deployment saves after the entity appears. Storage is not linked yet.");
     static int  selected = 0;
     static char filter[64] = "";
     static MenuSpawnOptions opt;

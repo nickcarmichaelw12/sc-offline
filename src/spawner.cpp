@@ -1,4 +1,5 @@
 #include "spawner.h"
+#include "bridge.h"
 #include "patches.h"
 #include "teleport.h"
 #include "menu.h"
@@ -1585,6 +1586,29 @@ static void ProcessGodMode(DWORD now) {
 
 void ProcessShipMenu(DWORD now) {
     if (!g_sp.ok) return;
+    static uint64_t bridgeEntity = 0;
+    static DWORD bridgeStarted = 0;
+    char bridgeClass[201] = {};
+    if (Bridge_TakeSpawn(bridgeClass, sizeof(bridgeClass))) {
+        uint64_t id = 0;
+        const char* error = SpawnShipAbovePlayer(bridgeClass, 30.0, id);
+        if (error || !id) {
+            Log("[bridge] spawn not confirmed: %s", error ? error : "no entity ID");
+            Bridge_Uncertain();
+        } else {
+            bridgeEntity = id; bridgeStarted = now;
+            SetTarget(id, bridgeClass);
+            StartSeatJob(id, bridgeClass, SeatMode_Pilot, nullptr, true, true, 0, now);
+            SetMenuStatus("Server ship requested. Waiting for its entity before saving deployment.");
+        }
+    }
+    if (bridgeEntity) {
+        if (EntityByIdSafe(bridgeEntity)) {
+            Bridge_ConfirmedEntity(bridgeEntity); bridgeEntity = 0;
+        } else if (now - bridgeStarted > 180000) {
+            Bridge_Uncertain(); bridgeEntity = 0;
+        }
+    }
     ProcessNoclip();
     ProcessGodMode(now);
     RefreshEnemySide();
