@@ -318,8 +318,32 @@ static void InstallTerminalContinuation(const Section& text) {
     if (site + 18 + Rel32(site + 13) != g_terminalBranchFlag) {
         st.result = PatchResult::NotFound; return;
     }
-    const uint8_t fallthrough[5] = { 0x90, 0x90, 0x90, 0x90, 0x90 };
-    if (!WriteCode(site + 6, fallthrough, sizeof(fallthrough), st.err)) {
+    // The authority branch overwrites EDI with the channel. The client branch
+    // still needs the ATC handle originally loaded into RDI from [RBP+0xD8].
+    // asop1 fell through with the channel as a pointer and crashed. Restore the
+    // original handle before entering the client branch, without replaying calls.
+    if (site < text.base + 0x342 ||
+        !BytesMatch(site - 0x342, "48 8B BD D8 00 00 00") ||
+        !BytesMatch(site - 0x2DC, "8B BD D0 00 00 00 85 FF 0F 85 94 02 00 00")) {
+        st.result = PatchResult::NotFound; return;
+    }
+    if (!g_cave || g_cave + 16 > g_caveEnd) { st.result = PatchResult::ProtectFailed; return; }
+    uint8_t* relay = g_cave;
+    const int64_t toRelay = reinterpret_cast<int64_t>(relay) - reinterpret_cast<int64_t>(site + 11);
+    const int64_t toClient = reinterpret_cast<int64_t>(site + 11) - reinterpret_cast<int64_t>(relay + 12);
+    if (toRelay < INT32_MIN || toRelay > INT32_MAX || toClient < INT32_MIN || toClient > INT32_MAX) {
+        st.result = PatchResult::ProtectFailed; return;
+    }
+    uint8_t code[12] = { 0x48, 0x8B, 0xBD, 0xD8, 0, 0, 0, 0xE9, 0, 0, 0, 0 };
+    const int32_t back = static_cast<int32_t>(toClient);
+    memcpy(code + 8, &back, sizeof(back));
+    memcpy(relay, code, sizeof(code));
+    FlushInstructionCache(GetCurrentProcess(), relay, sizeof(code));
+    g_cave += 16;
+    uint8_t jump[5] = { 0xE9, 0, 0, 0, 0 };
+    const int32_t forward = static_cast<int32_t>(toRelay);
+    memcpy(jump + 1, &forward, sizeof(forward));
+    if (!WriteCode(site + 6, jump, sizeof(jump), st.err)) {
         st.result = PatchResult::ProtectFailed; return;
     }
     st.result = PatchResult::Applied;

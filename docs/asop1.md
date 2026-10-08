@@ -1,5 +1,24 @@
 # ASOP local-host continuation experiment
 
+## Status: asop1 withdrawn; asop2 corrects the register transition
+
+The runtime test of asop1 crashed before fleet fetch. Dump analysis identified
+an access violation at preferred VA 0x1403D2720 (`mov rax,[rcx+0x18]`). RCX
+held the numeric channel, not an object pointer. Stack return addresses matched
+0x14511334E and 0x144C1C188: the latter call passes RDI to the ATC helper.
+The authority branch writes the channel into EDI at 0x144C1BCCC, destroying
+the original RDI handle. The normal client branch bypasses that write.
+
+asop2 replaces the NOP continuation with a near relay that restores RDI from
+[RBP+0xD8], matching the original load at 0x144C1BC66, then jumps to the
+existing client-flag check. The successful authority branch does not overwrite
+that stack slot. Exact-byte checks now also verify both register loads.
+This addresses the demonstrated invalid-pointer transition; further engine
+dependencies and actual terminal operation still require runtime validation.
+Use bridge1 for rollback. Do not use asop1 again. No server update is required.
+
+The original experiment notes below describe the superseded asop1 build.
+
 Version: 0.7.0-asop1. Server 0.2 remains unchanged.
 
 The bridge1 runtime test recorded three terminal opens, each with a nonzero
