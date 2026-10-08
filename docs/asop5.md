@@ -18,6 +18,17 @@ used by the mod. The tool reproduces legacy validity/equality failure and checks
 new validity, self equality, distinct ships, repeated copying and reassignment.
 It does not run the game or validate live services/UI.
 
+The regression now also calls the native provider's IsDeliverable function.
+Its complete function body is SHA-256 checked against the supplied build before
+execution. Only thread identity and the no-output logger are stubbed in the
+private test mapping; the provider lookup, UUID comparison, state predicate and
+lock accounting remain native. Two copied rows exercise first/second-row
+selection, state values 0 through 6 (only 1 permits delivery), missing/legacy
+identity, identical malformed row/query identities, and an empty fleet. Every
+call checks that the provider, rows and lock recursion count remain unchanged.
+These tests pass. They prove the corrected identity works in this native lookup,
+not that the terminal's other button-visibility conditions are satisfied.
+
 Native test passed on the supplied executable. CI checks encoding bounds,
 compilation and bridge regressions without needing the executable.
 
