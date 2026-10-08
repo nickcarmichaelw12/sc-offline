@@ -300,6 +300,31 @@ static void InstallTerminalBranchTrace(const Section& text) {
 }
 
 static FleetStageFn g_origTerminalOpen = nullptr;
+static PatchStatus g_terminalContinuationStatus;
+static void InstallTerminalContinuation(const Section& text) {
+    PatchStatus& st = g_terminalContinuationStatus;
+    st.expected = 1;
+    // Experimental local-host continuation, verified against CL12660092.
+    // Keep the authority-side handle/channel setup, then run the existing
+    // client-flag and local-player checks. Do not falsify the virtual query:
+    // forcing its result would skip the channel write needed by the client.
+    if (!g_origTerminalOpen || g_terminalBranchStatus.result != PatchResult::Applied) {
+        st.result = PatchResult::NotFound; return;
+    }
+    uint8_t* site = FindUniquePattern(text,
+        "89 BE E8 09 00 00 E9 5D 04 00 00 80 3D AB 2C 21 05 00 0F 84 50 04 00 00 48 8D 8E 78 02 00 00", st.sites);
+    if (!site) { st.result = st.sites ? PatchResult::WrongMatchCount : PatchResult::NotFound; return; }
+    // Cross-check this is the same flag operand validated by the branch trace.
+    if (site + 18 + Rel32(site + 13) != g_terminalBranchFlag) {
+        st.result = PatchResult::NotFound; return;
+    }
+    const uint8_t fallthrough[5] = { 0x90, 0x90, 0x90, 0x90, 0x90 };
+    if (!WriteCode(site + 6, fallthrough, sizeof(fallthrough), st.err)) {
+        st.result = PatchResult::ProtectFailed; return;
+    }
+    st.result = PatchResult::Applied;
+    st.at = site + 6;
+}
 static volatile LONG g_terminalOpens = 0;
 static void TraceTerminalState(uintptr_t self, uintptr_t request, LONG n, const char* phase) {
     bool readable = false;
@@ -432,10 +457,12 @@ void InstallHooks(const Section& text) {
         g_hooksInstalled = true;
     }
     InstallTerminalBranchTrace(text);
+    InstallTerminalContinuation(text);
 }
 
 void LogHooks() {
     LogPatch("terminal branch result trace", g_terminalBranchStatus);
+    LogPatch("ASOP local-host client continuation (experimental)", g_terminalContinuationStatus);
     for (size_t i = 0; i < sizeof(kHooks) / sizeof(kHooks[0]); ++i)
         LogPatch(kHooks[i].name, g_hookStatus[i]);
 }

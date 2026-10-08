@@ -184,11 +184,12 @@ static RequestInstanceFn g_requestInstanceOrig = nullptr;
 
 static uintptr_t __fastcall RequestInstanceHook(uintptr_t manager, const char* name, uintptr_t request) {
     __try {
-        if (SwapHubSlot(&InstanceRequestHub, &g_realHub)) Log("[atc] hangar requests answered here (single player: no services hub)");
+        if (SwapHubSlot(&InstanceRequestHub, &g_realHub)) Log("[atc] installed offline hangar service stand-in (does not create a hangar)");
     } __except (EXCEPTION_EXECUTE_HANDLER) { Log("[atc] fault preparing the hangar request"); }
     ++t_inInstanceRequest;
-    const uintptr_t result = g_requestInstanceOrig(manager, name, request);
-    --t_inInstanceRequest;
+    uintptr_t result = 0;
+    __try { result = g_requestInstanceOrig(manager, name, request); }
+    __finally { --t_inInstanceRequest; }
     return result;
 }
 
