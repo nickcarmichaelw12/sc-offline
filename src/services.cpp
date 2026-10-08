@@ -183,6 +183,7 @@ using RequestInstanceFn = uintptr_t(__fastcall*)(uintptr_t manager, const char* 
 static RequestInstanceFn g_requestInstanceOrig = nullptr;
 
 static uintptr_t __fastcall RequestInstanceHook(uintptr_t manager, const char* name, uintptr_t request) {
+    Log("[hangar] native instance request entered; completion is not implemented by the offline service stand-in");
     __try {
         if (SwapHubSlot(&InstanceRequestHub, &g_realHub)) Log("[atc] installed offline hangar service stand-in (does not create a hangar)");
     } __except (EXCEPTION_EXECUTE_HANDLER) { Log("[atc] fault preparing the hangar request"); }

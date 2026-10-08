@@ -1,4 +1,5 @@
 #include "hooks.h"
+#include "bridge.h"
 #include "fleet_response_policy.h"
 #include "teleport.h"
 #include <initializer_list>
@@ -365,6 +366,7 @@ static void TraceTerminalState(uintptr_t self, uintptr_t request, LONG n, const 
         n, phase, readable ? 1 : 0, requestHandle ? 1 : 0, atcLink ? 1 : 0);
 }
 static uintptr_t __fastcall Hook_TerminalOpen(uintptr_t self, uintptr_t request) {
+    Bridge_Refresh(); // HTTP runs on the bridge worker, never the engine thread.
     const LONG n = InterlockedIncrement(&g_terminalOpens);
     if (n <= 20) TraceTerminalState(self, request, n, "entry");
     const LONG previousTrace = t_terminalTrace;
@@ -512,7 +514,7 @@ constexpr uint64_t kShipUrnMarker = 0x53434F4600000000ull;
 constexpr size_t   kSlotUrn = 0x1698;
 constexpr size_t   kAsopAtcId = 0x9F8;
 
-struct FleetShip { char name[64]; uint64_t guid[2]; };
+struct FleetShip { char name[201]; uint64_t guid[2]; char serverId[121]; };
 // Same bound as the spawn menu (spawner.cpp kMaxMenuShips): ships.txt holds 1102 entries, and the
 // old 1024 here dropped the last 78 from the fleet manager without saying so.
 constexpr int kMaxFleetShips = 2048;
@@ -596,27 +598,23 @@ static void FindClassGuids(uintptr_t registry, const uintptr_t* classes) {
 }
 
 static int BuildFleetShips() {
-    char path[MAX_PATH];
-    if (!ShipsFilePath(path, sizeof(path)) || !g_tp.entitySystem || !*g_tp.entitySystem) return 0;
-    FILE* f = _fsopen(path, "r", _SH_DENYNO);
-    if (!f) { Log("[fleet] can't open %s", path); return 0; }
+    if (!g_tp.entitySystem || !*g_tp.entitySystem) return 0;
+    BridgeShip owned[256];
+    const int count = Bridge_OwnedFleet(owned, 256);
+    if (count < 0) { Log("[fleet] server fleet not loaded; close ASOP and reopen after bridge connects"); return 0; }
     static FleetShip ships[kMaxFleetShips];
     static uintptr_t classes[kMaxFleetShips];
     g_ships = ships;
     int missing = 0;
-    char line[128];
     const uintptr_t registry = VCall<uintptr_t>(*g_tp.entitySystem, 0xC0);
-    while (fgets(line, sizeof(line), f)) {
-        line[strcspn(line, "\r\n#")] = 0;
-        char* name = line + strspn(line, " \t");
-        if (!*name) continue;
-        if (g_shipCount >= kMaxFleetShips) { Log("[fleet] more than %d ships in %s; the rest are left out", kMaxFleetShips, path); break; }
+    for (int j = 0; j < count; ++j) {
+        const char* name = owned[j].cls;
         const uintptr_t cls = VCall<uintptr_t>(registry, 0x20, static_cast<const char*>(name));
         if (!cls) { if (++missing <= 5) Log("[fleet] unknown ship class '%s' (skipped)", name); continue; }
         strncpy_s(ships[g_shipCount].name, name, _TRUNCATE);
+        strncpy_s(ships[g_shipCount].serverId, owned[j].id, _TRUNCATE);
         classes[g_shipCount++] = cls;
     }
-    fclose(f);
     FindClassGuids(registry, classes);
 
     int kept = 0;
@@ -626,6 +624,8 @@ static int BuildFleetShips() {
         else Log("[fleet] no class GUID for '%s' (skipped)", ships[i].name);
     }
     g_shipCount = kept;
+
+    if (count > 0 && kept == 0) return 0; // Class registry may still be loading.
 
     g_fakeEntitlements = static_cast<uint8_t*>(calloc(kept ? kept : 1, kEntitlementSize));
     for (int i = 0; g_fakeEntitlements && i < kept; ++i) {
@@ -639,7 +639,7 @@ static int BuildFleetShips() {
         memcpy(e + 0x58, ships[i].guid, 16);
     }
     if (!g_fakeEntitlements) g_shipCount = 0;
-    Log("[fleet] %d ships available in the fleet manager (%d unknown names)", g_shipCount, missing);
+    Log("[fleet] %d server-owned ships mapped for this session (%d unknown classes); no catalogue fallback", g_shipCount, missing);
     return g_shipCount;
 }
 
@@ -657,7 +657,7 @@ static int EnsureFleetShips() {
             g_shipCount = 0;
             Log("[fleet] fault building offline ship list; eligible to retry on a later response");
         }
-        g_shipsBuilt = g_shipCount > 0 && g_fakeEntitlements != nullptr;
+        g_shipsBuilt = g_fakeEntitlements != nullptr;
         if (!g_shipsBuilt) Log("[fleet] ship list not ready; next returned query can retry after 3 seconds");
     }
     const int n = g_shipCount;
@@ -685,13 +685,13 @@ static void __fastcall Hook_EntitlementsResult(uintptr_t self, uintptr_t result)
     if (callback <= 20) Log("[fleet] entitlement callback #%ld: readable=%d status=%u category=%d (0 unreadable, 1 failed, 2 empty, 3 populated, 4 invalid range)",
         callback, readable ? 1 : 0, static_cast<unsigned>(status), static_cast<int>(response));
     const int n = fleetpolicy::NeedsFallback(response) ? EnsureFleetShips() : 0;
-    if (!n) { g_origEntitlementsResult(self, result); return; }
+    if (!fleetpolicy::NeedsFallback(response) || !g_shipsBuilt) { g_origEntitlementsResult(self, result); return; }
     struct { uint8_t ok; uint8_t pad[7]; uint8_t* begin; uint8_t* end; uint8_t* cap; uint8_t spare[64]; } fake = {};
     fake.ok = 1;
     fake.begin = g_fakeEntitlements;
     fake.end = fake.cap = g_fakeEntitlements + n * kEntitlementSize;
     const LONG fallback = InterlockedIncrement(&g_fleetFallbacks);
-    if (fallback <= 20) Log("[fleet] returned %s list -> supplying %d offline catalogue ships",
+    if (fallback <= 20) Log("[fleet] returned %s list -> supplying %d server-owned ships",
         response == fleetpolicy::Response::Empty ? "empty" : "failed", n);
     g_origEntitlementsResult(self, reinterpret_cast<uintptr_t>(&fake));
 }
@@ -717,7 +717,7 @@ static int SlotShipIndex(uintptr_t slot) {
         if (Rd<uint16_t>(urn) != kUrnType || Rd<uint8_t>(urn + 0x20) != 1) return -1;
         const uint64_t id = Rd<uint64_t>(urn + 0x10);
         const int i = static_cast<int>(static_cast<uint32_t>(id));
-        return (id & 0xFFFFFFFF00000000ull) == kShipUrnMarker && i < g_shipCount ? i : -1;
+        return (id & 0xFFFFFFFF00000000ull) == kShipUrnMarker && i >= 0 && i < g_shipCount ? i : -1;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return -1;
     }
@@ -751,9 +751,23 @@ static void __fastcall Hook_RetrieveVehicle(uintptr_t asop, uintptr_t slot) {
     InterlockedIncrement(&g_fleetRetrieves);
     const int i = SlotShipIndex(slot);
     if (i < 0) { g_origRetrieveVehicle(asop, slot); return; }
+    // Validate the immutable session binding against the latest server snapshot.
+    // Never reinterpret an old UI slot as another ship after a refresh.
+    BridgeShip current[256];
+    const int count = Bridge_OwnedFleet(current, 256);
+    bool stored = false;
+    for (int j = 0; j < count; ++j)
+        if (!strcmp(current[j].id, g_ships[i].serverId) && !strcmp(current[j].cls, g_ships[i].name))
+            stored = !strcmp(current[j].state, "stored");
+    if (!stored) { Log("[delivery] blocked: ship unavailable or server fleet missing; refresh the bridge"); return; }
+    static volatile LONG pending = 0;
+    if (InterlockedCompareExchange(&pending, 1, 0)) {
+        Log("[delivery] blocked duplicate ATC request: previous outcome unconfirmed; restart the game before another attempt");
+        return;
+    }
     uint64_t atc = 0;
     __try { atc = Rd<uint64_t>(asop + kAsopAtcId); } __except (EXCEPTION_EXECUTE_HANDLER) {}
     if (const char* err = RequestShipFromAtc(atc, LocalPlayerId(), g_ships[i].name))
-        Log("[fleet] retrieve %s failed: %s", g_ships[i].name, err);
-    else Log("[fleet] retrieve %s: asked the spaceport ATC for a hangar/pad", g_ships[i].name);
+        Log("[delivery] ATC request failed or uncertain: %s; duplicate guard retained", err);
+    else Log("[delivery] %s: requested native ATC hangar/pad at terminal location; assignment and ship placement UNCONFIRMED; server deployment unchanged", g_ships[i].name);
 }

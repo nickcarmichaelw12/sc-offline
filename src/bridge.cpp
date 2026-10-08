@@ -7,6 +7,7 @@
 
 static SRWLOCK g_bridgeLock = SRWLOCK_INIT;
 static BridgeShip g_fleet[256], g_selected;
+static bool g_fleetReady = false;
 static int g_count=0, g_phase=0; // 0 idle, 1 HTTP, 2 queued spawn, 3 awaiting entity, 4 locked/uncertain
 static char g_status[256]="Not connected. Start the server, pair it, then Refresh.";
 static char g_operation[33]={};
@@ -71,15 +72,22 @@ static DWORD WINAPI Worker(void*) {
     }
     std::string reply;std::vector<BridgeShip> fleet;
     if(!Http(L"/api/v1/bridge/fleet",nullptr,nullptr,reply)||!bridgewire::Fleet(reply,fleet)){
-        AcquireSRWLockExclusive(&g_bridgeLock);g_count=0;ReleaseSRWLockExclusive(&g_bridgeLock);
+        AcquireSRWLockExclusive(&g_bridgeLock);g_count=0;g_fleetReady=false;ReleaseSRWLockExclusive(&g_bridgeLock);
         Status("Connection failed: check server, pairing, and mod.log. Keep offline firewall enabled.",0);return 0;
     }
-    AcquireSRWLockExclusive(&g_bridgeLock);g_count=static_cast<int>(fleet.size());for(int i=0;i<g_count;++i)g_fleet[i]=fleet[i];ReleaseSRWLockExclusive(&g_bridgeLock);
+    AcquireSRWLockExclusive(&g_bridgeLock);g_count=static_cast<int>(fleet.size());for(int i=0;i<g_count;++i)g_fleet[i]=fleet[i];g_fleetReady=true;ReleaseSRWLockExclusive(&g_bridgeLock);
     Status(HasJournal()?"Unresolved spawn journal. Fleet readable; spawning locked until reconciled.":"Connected to local server. Owned fleet loaded.",HasJournal()?4:0);return 0;
 }
 static void Launch() {HANDLE thread=CreateThread(nullptr,0,Worker,nullptr,0,nullptr);if(thread)CloseHandle(thread);else Status("Cannot start bridge worker.",4);}
 void Bridge_Refresh() {
     AcquireSRWLockExclusive(&g_bridgeLock);if(g_phase==1||g_phase==2||g_phase==3){ReleaseSRWLockExclusive(&g_bridgeLock);return;}g_phase=1;g_reserve=false;g_entity=0;ReleaseSRWLockExclusive(&g_bridgeLock);Launch();
+}
+int Bridge_OwnedFleet(BridgeShip* ships, int capacity) {
+    AcquireSRWLockShared(&g_bridgeLock);
+    const int n = g_fleetReady ? (g_count < capacity ? g_count : capacity) : -1;
+    for (int i = 0; i < n; ++i) ships[i] = g_fleet[i];
+    ReleaseSRWLockShared(&g_bridgeLock);
+    return n;
 }
 int Bridge_Snapshot(BridgeShip* ships,int capacity,char* status,size_t size,bool& busy){AcquireSRWLockShared(&g_bridgeLock);int n=g_count<capacity?g_count:capacity;for(int i=0;i<n;++i)ships[i]=g_fleet[i];strncpy_s(status,size,g_status,_TRUNCATE);busy=g_phase!=0;ReleaseSRWLockShared(&g_bridgeLock);return n;}
 void Bridge_RequestSpawn(const BridgeShip& ship) {
