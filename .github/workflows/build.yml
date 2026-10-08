@@ -41,6 +41,9 @@ jobs:
       - name: Offline URN encoding tests
         run: g++ -std=c++20 -Wall -Wextra -Werror tests/urn_fixture.cpp -o /tmp/urn-fixture && /tmp/urn-fixture > /tmp/urn-fixtures.bin
 
+      - name: Native image parser tests (synthetic data only)
+        run: python3 tools/test_native_hangar_parser.py
+
   build:
     needs: check
     # Pinned: the project builds with the v145 toolset, which this image carries (VS 2026).
