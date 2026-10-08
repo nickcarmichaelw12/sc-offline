@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.7.0 (2026-10-07)
+
+- **Safer self-update** ([#31](https://github.com/scubamount/sc-offline/issues/31)). Each release zip now carries `manifest.json`: the version, tag, commit and every shipped file with its SHA-256. CI writes it and checks the finished zip against it. The launcher only installs files the manifest lists, with matching hashes, from a release newer than itself; paths with `..` are refused. Downloading and checking run with normal rights; for a Program Files install only the file swap asks for administrator rights, with no network. Each file is flushed to disk and checked again after it's moved; files locked by antivirus are retried. The update waits while the game runs, checks free disk space, and only times out on a stalled download. The new launcher must pass `--self-test` or the old files go back. New setting `update_channel = stable | prerelease`. `docs/launcher.md` explains how to check a download by hand.
+- **Discord status** ([#34](https://github.com/scubamount/sc-offline/issues/34)). While the game runs, your Discord profile shows **Playing sc-offline** with the version, time played and buttons to the sc-offline Discord and download page. It talks only to the Discord app on your PC. Turn it off with the **Show on Discord** box in the window or `discord_presence = off`.
+- Project activity (releases, merged PRs, issues opened or closed) now posts to the project's Discord channel ([#30](https://github.com/scubamount/sc-offline/issues/30)).
+- Docs and `sc-offline.ini`: `start_ship` only applies with `start = Daymar`, the wallet lives in `data\wallet.txt`, and a new **Not available offline** list in `docs/features.md` covers ASOP, the vehicle manager and character creation ([#26](https://github.com/scubamount/sc-offline/issues/26)).
+- README: 0.6.1 has been played in game on Windows; the "nobody has played it" note is gone. Linux through Wine is still untested.
+
+## 0.6.1 (2026-10-07)
+
+- **Online-safe light now updates while you play** ([#22](https://github.com/scubamount/sc-offline/issues/22)). It used to freeze while **Play** was running, so it stayed green with the game open and only changed at the end. It now refreshes every 1.5 seconds and turns red as soon as the mod is copied in or `StarCitizen.exe` is running.
+- **Wider window** (1160 px instead of 820 px), so log lines wrap less, and a **SCUBAMOUNT** watermark.
+- `--window` opens the window from a terminal or under Wine/Proton.
+- The `data` folder is created on first run, so a fresh unzip no longer warns that the folder can't be written.
+
+## 0.6.0 (2026-10-07)
+
+- **Launcher window** ([#20](https://github.com/scubamount/sc-offline/issues/20)). Double-clicking `sc-offline.exe` opens a window with **Play**, **Status**, **Update**, **Install**, **Uninstall**, **Open settings** and **Open logs**. Each button runs the same CLI command, its output shows in the window, and its questions get Yes/No buttons. An **Online-safe** light is green when the mod is out of Bin64 and no PC changes are left, red with a list otherwise; **Uninstall** is enabled only when there is something to undo. Every CLI command works as before; `--console` keeps the old double-click behaviour.
+
+## 0.5.1 (2026-10-07)
+
+- **Firewall also blocks the RSI Launcher and CIG's `CrashHandler.exe`** while you play ([#17](https://github.com/scubamount/sc-offline/issues/17)), recorded and removed with the existing rule. `sc-offline.exe` stays online for updates.
+- **Crash reports** ([#18](https://github.com/scubamount/sc-offline/issues/18)): after a crash, offer a zip of the logs in `data\crash-reports` with the RSI handle, GEID/account numbers and Windows user name redacted, and a prefilled bug form. Nothing is uploaded; `.dmp` files are left out. New setting `crash_reports = on | off`.
+- **Administrator rights only where needed** ([#16](https://github.com/scubamount/sc-offline/issues/16)): self-update of a protected folder and deleting protected session logs now ask Windows once, for that step only. The launcher and the game still run with normal rights. Warns when `data` can't be written.
+
+## 0.5.0 (2026-10-07)
+
+- **The launcher updates itself** ([#14](https://github.com/scubamount/sc-offline/issues/14)). On `play` and `status` it checks GitHub's latest full release (3-second timeout, never blocks play) and asks before installing. It downloads the release zip, checks it against GitHub's SHA-256 digest, swaps the program files with a journal in `data\update\applied.txt` (rolled back on failure, or on the next run after a crash), keeps `sc-offline.ini` and your saves, appends new ini settings commented out, and restarts itself. New command `sc-offline.exe update`, new setting `check_updates = on | off`.
+
+## 0.4.2 (2026-10-07)
+
+- **Offer to delete this session's game logs** ([#12](https://github.com/scubamount/sc-offline/issues/12)). When the game closes, the launcher lists the `Game.log`, `logbackups` and `Crashes` files written during the session and asks "Delete these files?" then "Are you sure?"; anything but `y` keeps them. Older logs are never touched. New `sc-offline.ini` setting `clean_logs = ask | off`.
+- The leftover-changes prompt now reads a whole line, so its Enter no longer answers the next question.
+
+## 0.4.1 (2026-10-07)
+
+- **The launcher finds the game in more places.** After `game =`, it now tries the folder it found last time (`data\game-path.txt`), where the RSI Launcher says the game is (its install entry and the paths in `%APPDATA%\rsilauncher`), more usual folders (`Game\Star Citizen\StarCitizen`, `Games\StarCitizen` and similar), a four-level search of every fixed drive, and finally a folder picker. `game =` also accepts the folder that holds `StarCitizen`.
+
+## 0.4.0 (2026-10-07)
+
+- **The launcher sets up offline play itself.** Each play, its helper blocks `StarCitizen.exe` in Windows Firewall, adds the EAC hosts line and renames `EasyAntiCheat_EOS.exe`, then undoes exactly those changes when the game closes. New `sc-offline.ini` switches `block_network`, `eac_hosts`, `eac_rename` (all on). Changes are recorded in `%ProgramData%\sc-offline\pc-changes.txt`; after a crash, `status` lists them, `uninstall` undoes them and `play` offers to.
+- The manual EAC steps are gone from the README's Setup; Windows now asks for administrator rights once per play.
+
 ## 0.3.0 (2026-10-07)
 
 - **Renamed to sc-offline.** The original ChrisWareOffline project has shut down; this is now an independent project based on ChrisWareOffline 0.9.0-rc1 (GPL-3.0). Window title, menu title, `mod.log` and the launcher say sc-offline. Removed the original project's Discord links.
