@@ -1,5 +1,6 @@
 #include "hooks.h"
 #include "bridge.h"
+#include "offline_urn.h"
 #include "fleet_response_policy.h"
 #include "teleport.h"
 #include <initializer_list>
@@ -465,65 +466,6 @@ static const HookSpec kHooks[] = {
 };
 static PatchStatus g_hookStatus[sizeof(kHooks) / sizeof(kHooks[0])];
 
-static bool IsOfflineShipUrn(uintptr_t urn);
-using UrnValidFn = bool(__fastcall*)(uintptr_t);
-static UrnValidFn g_nativeUrnValid = nullptr;
-static PatchStatus g_actionUrnStatus[3];
-static bool __fastcall ActionUrnValid(uintptr_t urn) {
-    if (IsOfflineShipUrn(urn)) {
-        static volatile LONG seen = 0;
-        if (InterlockedIncrement(&seen) <= 12) Log("[asop-action] recognized mapped offline ship URN at action gate");
-        return true;
-    }
-    return g_nativeUrnValid(urn);
-}
-static void InstallActionUrnChecks(const Section& text) {
-    // Only the three ASOP call sites that gate the deliverability check. The
-    // engine-wide validator and service authorization are left untouched.
-    const char* patterns[] = {
-        "49 8B CF E8 9D CC 83 FB 84 C0 74 16 49 8B D7 48 8B CF",
-        "48 8D 8F 10 01 00 00 E8 EF CD 80 FB 84 C0 0F 84 13 FF FF FF",
-        "49 8B CF E8 8D C1 80 FB 84 C0 74 3A 49 8B D7 49 8B CD"
-    };
-    const int offsets[] = { 3, 7, 3 };
-    uint8_t* calls[3] = {};
-    uint8_t* original = nullptr;
-    for (int i = 0; i < 3; ++i) {
-        auto& st = g_actionUrnStatus[i]; st.expected = 1;
-        uint8_t* anchor = FindUniquePattern(text, patterns[i], st.sites);
-        if (!anchor) { st.result = st.sites ? PatchResult::WrongMatchCount : PatchResult::NotFound; return; }
-        calls[i] = anchor + offsets[i];
-        uint8_t* target = calls[i] + 5 + Rel32(calls[i] + 1);
-        if ((original && original != target) ||
-            !BytesMatch(target, "80 39 11 74 0F 80 79 01 1E 74 09 80 79 08 05 74 03 B0 01 C3 32 C0 C3")) {
-            st.result = PatchResult::NotFound; return;
-        }
-        original = target;
-    }
-    if (!g_cave || g_cave + 16 > g_caveEnd) {
-        for (auto& st : g_actionUrnStatus) st.result = PatchResult::ProtectFailed;
-        return;
-    }
-    uint8_t* relay = g_cave;
-    int32_t distances[3];
-    for (int i = 0; i < 3; ++i) {
-        const int64_t d = reinterpret_cast<int64_t>(relay) - reinterpret_cast<int64_t>(calls[i] + 5);
-        if (d < INT32_MIN || d > INT32_MAX) { g_actionUrnStatus[i].result = PatchResult::ProtectFailed; return; }
-        distances[i] = static_cast<int32_t>(d);
-    }
-    const auto fn = &ActionUrnValid;
-    relay[0] = 0xFF; relay[1] = 0x25; memset(relay + 2, 0, 4); memcpy(relay + 6, &fn, 8);
-    FlushInstructionCache(GetCurrentProcess(), relay, 14);
-    g_cave += 16;
-    g_nativeUrnValid = reinterpret_cast<UrnValidFn>(original);
-    for (int i = 0; i < 3; ++i) {
-        auto& st = g_actionUrnStatus[i]; uint8_t patch[5] = { 0xE8, 0, 0, 0, 0 };
-        memcpy(patch + 1, &distances[i], 4);
-        if (!WriteCode(calls[i], patch, 5, st.err)) { st.result = PatchResult::ProtectFailed; continue; }
-        st.result = PatchResult::Applied; st.at = calls[i];
-    }
-}
-
 void InstallHooks(const Section& text) {
     if (!AllocCaveNear(text.base)) {
         for (PatchStatus& st : g_hookStatus) st.result = PatchResult::ProtectFailed;
@@ -543,13 +485,11 @@ void InstallHooks(const Section& text) {
     }
     InstallTerminalBranchTrace(text);
     InstallTerminalContinuation(text);
-    InstallActionUrnChecks(text);
 }
 
 void LogHooks() {
     LogPatch("terminal branch result trace", g_terminalBranchStatus);
     LogPatch("ASOP local-host client continuation (experimental)", g_terminalContinuationStatus);
-    for (const auto& st : g_actionUrnStatus) LogPatch("ASOP mapped offline URN action gate", st);
     for (size_t i = 0; i < sizeof(kHooks) / sizeof(kHooks[0]); ++i)
         LogPatch(kHooks[i].name, g_hookStatus[i]);
 }
@@ -570,8 +510,6 @@ uint8_t* NearData(size_t n) {
 }
 
 constexpr size_t   kEntitlementSize = 0x150;
-constexpr uint16_t kUrnType = 0x1E11;
-constexpr uint64_t kShipUrnMarker = 0x53434F4600000000ull;
 constexpr size_t   kSlotUrn = 0x1698;
 constexpr size_t   kAsopAtcId = 0x9F8;
 
@@ -691,10 +629,7 @@ static int BuildFleetShips() {
     g_fakeEntitlements = static_cast<uint8_t*>(calloc(kept ? kept : 1, kEntitlementSize));
     for (int i = 0; g_fakeEntitlements && i < kept; ++i) {
         uint8_t* e = g_fakeEntitlements + i * kEntitlementSize;
-        *reinterpret_cast<uint16_t*>(e + 0x00) = kUrnType;
-        e[0x08] = 5;
-        *reinterpret_cast<uint64_t*>(e + 0x10) = kShipUrnMarker | static_cast<uint32_t>(i);
-        e[0x20] = 1;
+        offlineurn::Encode(e, static_cast<uint32_t>(i));
         e[0x50] = 3;
         *reinterpret_cast<uint32_t*>(e + 0x54) = 1;
         memcpy(e + 0x58, ships[i].guid, 16);
@@ -775,25 +710,10 @@ void ProcessFleetDiagnostics(DWORD now) {
 static int SlotShipIndex(uintptr_t slot) {
     __try {
         const uintptr_t urn = slot + kSlotUrn;
-        if (Rd<uint16_t>(urn) != kUrnType || Rd<uint8_t>(urn + 0x20) != 1) return -1;
-        const uint64_t id = Rd<uint64_t>(urn + 0x10);
-        const int i = static_cast<int>(static_cast<uint32_t>(id));
-        return (id & 0xFFFFFFFF00000000ull) == kShipUrnMarker && i >= 0 && i < g_shipCount ? i : -1;
+        return offlineurn::Index(reinterpret_cast<const void*>(urn), static_cast<uint32_t>(g_shipCount));
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return -1;
     }
-}
-
-static bool IsOfflineShipUrn(uintptr_t urn) {
-    // Retain the exact synthetic identifier namespace and immutable slot bound.
-    __try {
-        if (!g_shipsBuilt || !urn || Rd<uint16_t>(urn) != kUrnType ||
-            Rd<uint8_t>(urn + 8) != 5 || Rd<uint8_t>(urn + 0x20) != 1) return false;
-        const uint64_t id = Rd<uint64_t>(urn + 0x10);
-        const uint32_t index = static_cast<uint32_t>(id);
-        return (id & 0xFFFFFFFF00000000ull) == kShipUrnMarker &&
-            index < static_cast<uint32_t>(g_shipCount) && g_ships[index].serverId[0] != 0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
 const char* RequestShipFromAtc(uint64_t atcEntity, uint64_t player, const char* shipClass) {
