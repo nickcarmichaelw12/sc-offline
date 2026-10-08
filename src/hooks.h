@@ -12,3 +12,4 @@ void FreeCryString(void* s);
 const char* RequestShipFromAtc(uint64_t atcEntity, uint64_t player, const char* shipClass);
 
 void ProcessFleetDiagnostics(DWORD now);
+void ProcessAtcDelivery();

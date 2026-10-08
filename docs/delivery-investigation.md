@@ -1,5 +1,8 @@
 # Native delivery and hangar integration checkpoint
 
+Historical investigation preceding asop6. See asop6.md for the new reserved
+Deliver/Retrieve dispatch adapter; the world-lifecycle boundaries below remain.
+
 Scope: locally supplied 4.10.193.11644 / CL12660092 executable. Addresses below
 are preferred virtual addresses (image base 0x140000000), not runtime addresses
 or portable hook signatures. No game code, account data or logs are included.

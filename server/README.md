@@ -96,3 +96,9 @@ New authenticated routes:
 Bridge confirmations record entity existence only. Reservations survive restarts
 and do not expire automatically. Ended-session recovery is deliberately explicit.
 The game-to-server protocol here is our adapter API, not CIG's native service API.
+
+The asop6 development DLL routes owned ASOP Deliver/Retrieve requests through the
+same reservation lane as the menu spawner. It can submit a native ATC request,
+but cannot yet confirm hangar creation, placement or doors. Such requests retain
+their reservation/journal and do not save a deployed ship. Do not interpret a
+successful request as delivery completion; exit the game before recovery.

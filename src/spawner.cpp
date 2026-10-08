@@ -1,5 +1,6 @@
 #include "spawner.h"
 #include "bridge.h"
+#include "hooks.h"
 #include "patches.h"
 #include "teleport.h"
 #include "menu.h"
@@ -1585,6 +1586,7 @@ static void ProcessGodMode(DWORD now) {
 }
 
 void ProcessShipMenu(DWORD now) {
+    ProcessAtcDelivery();
     if (!g_sp.ok) return;
     static uint64_t bridgeEntity = 0;
     static DWORD bridgeStarted = 0;

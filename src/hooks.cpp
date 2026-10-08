@@ -213,10 +213,13 @@ using EntitlementsResultFn = void(__fastcall*)(uintptr_t, uintptr_t);
 using RetrieveVehicleFn    = void(__fastcall*)(uintptr_t, uintptr_t);
 static EntitlementsResultFn g_origEntitlementsResult = nullptr;
 static RetrieveVehicleFn    g_origRetrieveVehicle = nullptr;
+static RetrieveVehicleFn    g_origDeliverVehicle = nullptr;
 static void __fastcall Hook_EntitlementsResult(uintptr_t self, uintptr_t result);
 static void __fastcall Hook_RetrieveVehicle(uintptr_t asop, uintptr_t slot);
+static void __fastcall Hook_DeliverVehicle(uintptr_t asop, uintptr_t event);
 static bool PrepareEntitlementsResult(uint8_t* target);
 static bool PrepareRetrieveVehicle(uint8_t* target);
+static bool PrepareDeliverVehicle(uint8_t* target);
 
 // Verified against client 4.10.193.11644 (CL 12660092). Observe only:
 // never retain engine objects or fabricate completion of an outstanding future.
@@ -463,6 +466,10 @@ static const HookSpec kHooks[] = {
       "48 89 54 24 10 55 53 41 55 41 57 48 8D AC 24 A8 FE FF FF 48 81 EC 68 02 00 00 4C 8B FA 4C 8B E9 48 8B 51 08 48 8D 8D 80 01 00 00 E8",
       5, reinterpret_cast<void*>(&Hook_RetrieveVehicle), reinterpret_cast<void**>(&g_origRetrieveVehicle),
       &PrepareRetrieveVehicle },
+    { "fleet manager deliver -> reserved spaceport ATC",
+      "48 8B C4 55 48 8D A8 78 FD FF FF 48 81 EC 80 03 00 00 48 89 58 08 48 89 70 F0 48 8B F2 4C 89 60 E0 4C 89 70 D0 4C 8B F1",
+      11, reinterpret_cast<void*>(&Hook_DeliverVehicle), reinterpret_cast<void**>(&g_origDeliverVehicle),
+      &PrepareDeliverVehicle },
 };
 static PatchStatus g_hookStatus[sizeof(kHooks) / sizeof(kHooks[0])];
 
@@ -569,6 +576,17 @@ static bool PrepareRetrieveVehicle(uint8_t* target) {
     g_strDtor          = reinterpret_cast<StrDtorFn>(cmd + 0xA9 + 5 + Rel32(cmd + 0xAA));
     g_requestTakingOff = reinterpret_cast<RequestTakingOffFn>(cmd + 0x190 + 5 + Rel32(cmd + 0x191));
     return true;
+}
+
+static bool PrepareDeliverVehicle(uint8_t* target) {
+    // Cross-check the event registration -> thunk -> handler chain, not just
+    // a prologue match. The stolen 11 bytes contain no relative instructions.
+    const uint8_t* name = FindCString(g_rdata, "SCEvtControl_ShipSelectorDeliverVehicle");
+    const uint8_t* lea = name ? FindRipLea(g_text, 0x48, 0x8D, 0x05, name) : nullptr;
+    if (!lea || !BytesMatch(lea - 0x43, "48 8D 05")) return false;
+    const uint8_t* thunk = lea - 0x43 + 7 + Rel32(lea - 0x40);
+    return BytesMatch(thunk, "E9") && thunk + 5 + Rel32(thunk + 1) == target
+        && BytesMatch(target + 0x101, "48 8B 16 4D 8B BE F0 00 00 00 48 69 CA C0 16 00 00 49 81 C7 98 16 00 00");
 }
 
 static uint64_t LocalPlayerId() {
@@ -740,27 +758,65 @@ const char* RequestShipFromAtc(uint64_t atcEntity, uint64_t player, const char* 
     }
 }
 
-static void __fastcall Hook_RetrieveVehicle(uintptr_t asop, uintptr_t slot) {
-    InterlockedIncrement(&g_fleetRetrieves);
-    const int i = SlotShipIndex(slot);
-    if (i < 0) { g_origRetrieveVehicle(asop, slot); return; }
+static void QueueOwnedAtc(uintptr_t asop, int i) {
     // Validate the immutable session binding against the latest server snapshot.
     // Never reinterpret an old UI slot as another ship after a refresh.
     BridgeShip current[256];
     const int count = Bridge_OwnedFleet(current, 256);
-    bool stored = false;
+    int selected = -1;
     for (int j = 0; j < count; ++j)
         if (!strcmp(current[j].id, g_ships[i].serverId) && !strcmp(current[j].cls, g_ships[i].name))
-            stored = !strcmp(current[j].state, "stored");
-    if (!stored) { Log("[delivery] blocked: ship unavailable or server fleet missing; refresh the bridge"); return; }
-    static volatile LONG pending = 0;
-    if (InterlockedCompareExchange(&pending, 1, 0)) {
-        Log("[delivery] blocked duplicate ATC request: previous outcome unconfirmed; restart the game before another attempt");
-        return;
+            if (!strcmp(current[j].state, "stored")) selected = j;
+    if (selected < 0) { Log("[delivery] blocked: ship unavailable or server fleet missing; refresh the bridge"); return; }
+    uint64_t atc = 0, player = 0;
+    __try { atc = Rd<uint64_t>(asop + kAsopAtcId); player = LocalPlayerId(); }
+    __except (EXCEPTION_EXECUTE_HANDLER) {}
+    if (!g_getATCComp || !g_requestTakingOff || !atc || !player) {
+        Log("[delivery] blocked before reservation: native ATC/player context unavailable"); return;
     }
-    uint64_t atc = 0;
-    __try { atc = Rd<uint64_t>(asop + kAsopAtcId); } __except (EXCEPTION_EXECUTE_HANDLER) {}
-    if (const char* err = RequestShipFromAtc(atc, LocalPlayerId(), g_ships[i].name))
-        Log("[delivery] ATC request failed or uncertain: %s; duplicate guard retained", err);
-    else Log("[delivery] %s: requested native ATC hangar/pad at terminal location; assignment and ship placement UNCONFIRMED; server deployment unchanged", g_ships[i].name);
+    if (Bridge_RequestAtc(current[selected], atc, player))
+        Log("[delivery] owned ship queued for server reservation; no ATC request or deployment confirmed yet");
+    else Log("[delivery] blocked: bridge busy, unresolved journal, or reservation could not start");
+}
+
+static void __fastcall Hook_RetrieveVehicle(uintptr_t asop, uintptr_t slot) {
+    InterlockedIncrement(&g_fleetRetrieves);
+    const int i = SlotShipIndex(slot);
+    if (i < 0) { g_origRetrieveVehicle(asop, slot); return; }
+    QueueOwnedAtc(asop, i);
+}
+
+static uintptr_t DeliverEventSlot(uintptr_t asop, uintptr_t event) {
+    __try {
+        const uint64_t index = Rd<uint64_t>(event);
+        // Session fleet size is an upper bound, not an assumption about the UI's
+        // filtered row count. SlotShipIndex separately validates the actual URN.
+        if (index >= static_cast<uint64_t>(g_shipCount)) return 0;
+        const uintptr_t slots = Rd<uintptr_t>(asop + 0xF0);
+        if (!slots || slots > UINTPTR_MAX - (index + 1) * 0x16C0) return 0;
+        return slots + index * 0x16C0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+
+static void __fastcall Hook_DeliverVehicle(uintptr_t asop, uintptr_t event) {
+    const uintptr_t slot = DeliverEventSlot(asop, event);
+    if (!slot) { Log("[delivery] blocked invalid or unavailable Deliver event slot"); return; }
+    const int i = SlotShipIndex(slot);
+    if (i < 0) { g_origDeliverVehicle(asop, event); return; }
+    QueueOwnedAtc(asop, i);
+}
+
+void ProcessAtcDelivery() {
+    char cls[201] = {};
+    uint64_t atc = 0, player = 0, currentPlayer = 0;
+    if (!Bridge_TakeAtc(cls, sizeof(cls), atc, player)) return;
+    __try { currentPlayer = LocalPlayerId(); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    if (!currentPlayer || currentPlayer != player)
+        Log("[delivery] ATC dispatch blocked: player changed while reservation was pending");
+    else if (const char* err = RequestShipFromAtc(atc, player, cls))
+        Log("[delivery] reserved ATC request failed or uncertain: %s", err);
+    else Log("[delivery] %s: native ATC request issued; hangar and ship placement UNCONFIRMED", cls);
+    // No completion adapter exists yet. Preserve the server reservation/journal
+    // even after a successful native call; never synthesize a deployed entity.
+    Bridge_AtcUnconfirmed();
 }

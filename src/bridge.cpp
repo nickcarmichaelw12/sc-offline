@@ -8,11 +8,15 @@
 static SRWLOCK g_bridgeLock = SRWLOCK_INIT;
 static BridgeShip g_fleet[256], g_selected;
 static bool g_fleetReady = false;
-static int g_count=0, g_phase=0; // 0 idle, 1 HTTP, 2 queued spawn, 3 awaiting entity, 4 locked/uncertain
+static int g_count=0, g_phase=0; // 0 idle, 1 HTTP, 2 queued game action, 3 dispatched, 4 locked/uncertain
 static char g_status[256]="Not connected. Start the server, pair it, then Refresh.";
 static char g_operation[33]={};
 static uint64_t g_entity=0;
 static bool g_reserve=false;
+// One reservation lane for menu spawning and ASOP. Never retain engine pointers
+// across the HTTP worker: resolve these entity IDs again on the game thread.
+static bool g_atcRoute=false;
+static uint64_t g_atcId=0, g_playerId=0;
 
 static void Status(const char* text, int phase) {
     AcquireSRWLockExclusive(&g_bridgeLock); strcpy_s(g_status,text);g_phase=phase;ReleaseSRWLockExclusive(&g_bridgeLock);
@@ -60,7 +64,7 @@ static DWORD WINAPI Worker(void*) {
         char body[512],key[64];sprintf_s(body,"{\"ship_id\":\"%s\",\"expected_version\":%llu,\"operation_id\":\"%s\"}",g_selected.id,g_selected.version,g_operation);sprintf_s(key,"%s-reserve",g_operation);
         std::string input(body),response;
         if(!Http(L"/api/v1/bridge/reserve",&input,key,response)||response.find(g_operation)==std::string::npos||response.find("\"reserved\"")==std::string::npos){Status("Reservation unconfirmed. No spawn attempted; keep bridge-pending.txt for recovery.",4);return 0;}
-        Status("Reserved. Waiting for the game to spawn your ship...",2);return 0;
+        Status(g_atcRoute ? "Reserved. Waiting for the game-thread ATC request..." : "Reserved. Waiting for the game to spawn your ship...",2);return 0;
     }
     if(g_entity) {
         if(!Journal()){Status("Ship exists but confirmation journal failed. Do not spawn again.",4);return 0;}
@@ -90,13 +94,25 @@ int Bridge_OwnedFleet(BridgeShip* ships, int capacity) {
     return n;
 }
 int Bridge_Snapshot(BridgeShip* ships,int capacity,char* status,size_t size,bool& busy){AcquireSRWLockShared(&g_bridgeLock);int n=g_count<capacity?g_count:capacity;for(int i=0;i<n;++i)ships[i]=g_fleet[i];strncpy_s(status,size,g_status,_TRUNCATE);busy=g_phase!=0;ReleaseSRWLockShared(&g_bridgeLock);return n;}
-void Bridge_RequestSpawn(const BridgeShip& ship) {
+static bool Request(const BridgeShip& ship, bool atcRoute, uint64_t atc, uint64_t player) {
     AcquireSRWLockExclusive(&g_bridgeLock);
-    if(g_phase!=0||strcmp(ship.state,"stored")||HasJournal()){ReleaseSRWLockExclusive(&g_bridgeLock);return;}
-    unsigned char random[16];if(BCryptGenRandom(nullptr,random,sizeof(random),BCRYPT_USE_SYSTEM_PREFERRED_RNG)!=0){ReleaseSRWLockExclusive(&g_bridgeLock);return;}
+    if(g_phase!=0||strcmp(ship.state,"stored")||HasJournal()){ReleaseSRWLockExclusive(&g_bridgeLock);return false;}
+    unsigned char random[16];if(BCryptGenRandom(nullptr,random,sizeof(random),BCRYPT_USE_SYSTEM_PREFERRED_RNG)!=0){ReleaseSRWLockExclusive(&g_bridgeLock);return false;}
     for(int i=0;i<16;++i)sprintf_s(g_operation+2*i,3,"%02x",random[i]);
-    g_selected=ship;g_reserve=true;g_entity=0;g_phase=1;ReleaseSRWLockExclusive(&g_bridgeLock);Launch();
+    g_selected=ship;g_reserve=true;g_entity=0;g_atcRoute=atcRoute;g_atcId=atc;g_playerId=player;
+    g_phase=1;ReleaseSRWLockExclusive(&g_bridgeLock);Launch();return true;
 }
-bool Bridge_TakeSpawn(char* cls,size_t size){AcquireSRWLockExclusive(&g_bridgeLock);bool ok=g_phase==2;if(ok){strncpy_s(cls,size,g_selected.cls,_TRUNCATE);g_phase=3;}ReleaseSRWLockExclusive(&g_bridgeLock);return ok;}
-void Bridge_ConfirmedEntity(uint64_t entity){AcquireSRWLockExclusive(&g_bridgeLock);if(g_phase!=3){ReleaseSRWLockExclusive(&g_bridgeLock);return;}g_entity=entity;g_reserve=false;g_phase=1;ReleaseSRWLockExclusive(&g_bridgeLock);Launch();}
+void Bridge_RequestSpawn(const BridgeShip& ship) { Request(ship,false,0,0); }
+bool Bridge_RequestAtc(const BridgeShip& ship,uint64_t atc,uint64_t player) {
+    return atc && player && Request(ship,true,atc,player);
+}
+bool Bridge_TakeSpawn(char* cls,size_t size){AcquireSRWLockExclusive(&g_bridgeLock);bool ok=g_phase==2&&!g_atcRoute&&cls&&size>strlen(g_selected.cls);if(ok){strcpy_s(cls,size,g_selected.cls);g_phase=3;}ReleaseSRWLockExclusive(&g_bridgeLock);return ok;}
+bool Bridge_TakeAtc(char* cls,size_t size,uint64_t& atc,uint64_t& player) {
+    AcquireSRWLockExclusive(&g_bridgeLock);
+    bool ok=g_phase==2&&g_atcRoute&&cls&&size>strlen(g_selected.cls);
+    if(ok){strcpy_s(cls,size,g_selected.cls);atc=g_atcId;player=g_playerId;g_phase=3;}
+    ReleaseSRWLockExclusive(&g_bridgeLock);return ok;
+}
+void Bridge_AtcUnconfirmed(){Status("ATC outcome unconfirmed. Reservation retained; no deployment saved. Restart/recover before retry.",4);}
+void Bridge_ConfirmedEntity(uint64_t entity){AcquireSRWLockExclusive(&g_bridgeLock);if(g_phase!=3||g_atcRoute||!entity){ReleaseSRWLockExclusive(&g_bridgeLock);return;}g_entity=entity;g_reserve=false;g_phase=1;ReleaseSRWLockExclusive(&g_bridgeLock);Launch();}
 void Bridge_Uncertain(){Status("Spawn outcome uncertain. Reservation kept; no retry. Keep bridge-pending.txt for recovery.",4);}
