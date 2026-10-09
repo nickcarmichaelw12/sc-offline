@@ -13,6 +13,7 @@ Everything the menu reads is plain text in `data/`. Most files explain their own
 | `outfits.txt` | 35 outfits: each is a `[name]` line, then one line per piece |
 | `locations.txt` | Places for the Travel tab: system, name, entity, radius |
 | `contract_scripts.txt` | The 796 contracts that run without any CIG mission script; see [features.md](features.md#contracts). |
+| `builtin/quantum/datacore/quantum_drive.toml` | The new quantum drive's game data, applied as the game loads (see [features.md](features.md#logging)) |
 | `OfflineDB/default_1.xml` | The starting loadout. The launcher copies it to `user\client\0` |
 
 ## Files the mod creates
