@@ -161,6 +161,7 @@ static void SetFeatureCaps() {
     SetCap("offline", g_offline);
     SetCap("teleport", g_tp.ok);
     SetCap("spawn.ship", SpawnerReady());
+    SetCap("crew", Menu_SeatControlAvailable());
     SetCap("outfits", g_outfitsOk);
     SetCap("quantum.drive", QuantumDriveReady());
     SetCap("quantum.boost", QuantumBoostReady());
@@ -262,9 +263,10 @@ static void InstallQuitHook() {
 }
 
 static void RunFeatureTicks(DWORD now) {
-    // The spawn built-in runs the spawner from its tick subscription; this is the fallback when it
-    // didn't load.
+    // Each built-in runs its feature's work from its tick subscription; these calls are the
+    // fallback for a built-in that didn't load.
     if (!SpawnBuiltinOwnsTick()) ProcessShipMenu(now);
+    if (!CrewBuiltinOwnsTick()) ProcessCrew(now);
     ProcessLoadout();
     ProcessNpcs();
     ProcessBuild();

@@ -1702,10 +1702,16 @@ void ProcessShipMenu(DWORD now) {
         }
     }
 
-    ProcessSeatAction(now);
     UpdateSeatJob(now);
-    UpdateCrewJobs(now);
     RunPowerJob(now);
+}
+
+// The Crew & seats panel's work: its queued seat actions (and the Vehicles tab's Power on), the
+// crew jobs, and the seat list. Run by the crew built-in's tick, after the spawner's.
+void ProcessCrew(DWORD now) {
+    if (!g_sp.ok) return;
+    ProcessSeatAction(now);
+    UpdateCrewJobs(now);
 
     // Keep the Crew & seats list live while the menu is showing it.
     static DWORD lastSeatRefresh = 0;

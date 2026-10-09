@@ -114,6 +114,7 @@ add_library(dinput8 SHARED
   # Built-in plugins (src/builtins/builtins.h).
   src/builtins/teleport_plugin.cpp
   src/builtins/spawn_plugin.cpp
+  src/builtins/crew_plugin.cpp
   # Manifest EnableSegmentHeap.
   src/dinput8.manifest
 )
