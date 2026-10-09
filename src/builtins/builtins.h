@@ -10,6 +10,7 @@
 extern const sco::plugins::Builtin kTeleportBuiltin;   // teleport_plugin.cpp: teleport.save, teleport.go
 extern const sco::plugins::Builtin kSpawnBuiltin;      // spawn_plugin.cpp: spawn.ship, spawn.entities, the spawner tick
 extern const sco::plugins::Builtin kCrewBuiltin;       // crew_plugin.cpp: crew.*, seat actions and crew jobs
+extern const sco::plugins::Builtin kNpcBuiltin;        // npc_plugin.cpp: npc.spawn, npc.clear, the NPC tick
 
 // True while the spawn built-in is loaded (or crashed): its tick subscription runs ProcessShipMenu,
 // so dllmain doesn't. False when it never loaded, and dllmain runs the spawner tick itself.
@@ -17,6 +18,7 @@ bool SpawnBuiltinOwnsTick();
 // The same for the built-ins after it: true while that built-in's tick subscription runs its
 // feature's per-tick work, so RunFeatureTicks (dllmain.cpp) runs it only as the fallback.
 bool CrewBuiltinOwnsTick();
+bool NpcBuiltinOwnsTick();
 
 // The index of the entry named `name` (any case) in a list of count names, or -1.
 inline int FindBuiltinName(int count, const char* (*nameAt)(int), const char* name) {
@@ -52,4 +54,4 @@ inline sco_result RegisterBuiltinCommand(const sco_api* api, sco_plugin* self, c
 }
 
 // Every built-in, in load order.
-inline const sco::plugins::Builtin kBuiltins[] = { kTeleportBuiltin, kSpawnBuiltin, kCrewBuiltin };
+inline const sco::plugins::Builtin kBuiltins[] = { kTeleportBuiltin, kSpawnBuiltin, kCrewBuiltin, kNpcBuiltin };

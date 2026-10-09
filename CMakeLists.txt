@@ -115,6 +115,7 @@ add_library(dinput8 SHARED
   src/builtins/teleport_plugin.cpp
   src/builtins/spawn_plugin.cpp
   src/builtins/crew_plugin.cpp
+  src/builtins/npc_plugin.cpp
   # Manifest EnableSegmentHeap.
   src/dinput8.manifest
 )

@@ -162,6 +162,7 @@ static void SetFeatureCaps() {
     SetCap("teleport", g_tp.ok);
     SetCap("spawn.ship", SpawnerReady());
     SetCap("crew", Menu_SeatControlAvailable());
+    SetCap("npc", SpawnerReady());
     SetCap("outfits", g_outfitsOk);
     SetCap("quantum.drive", QuantumDriveReady());
     SetCap("quantum.boost", QuantumBoostReady());
@@ -268,7 +269,7 @@ static void RunFeatureTicks(DWORD now) {
     if (!SpawnBuiltinOwnsTick()) ProcessShipMenu(now);
     if (!CrewBuiltinOwnsTick()) ProcessCrew(now);
     ProcessLoadout();
-    ProcessNpcs();
+    if (!NpcBuiltinOwnsTick()) ProcessNpcs();
     ProcessBuild();
     ProcessCVars();
     ProcessQuantum();
