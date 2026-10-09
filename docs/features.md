@@ -74,30 +74,53 @@ sc-offline can load plugins built with the [sco SDK](https://github.com/scubamou
 3. Start the game. `mod.log` reports what was found, after the startup lines:
 
    ```
-   [plugin] 5 found, 5 loaded (plugins = on)
+   [plugin] 12 found, 12 loaded (plugins = on)
    [plugin] teleport <version> builtin loaded
    [plugin] spawn <version> builtin loaded
+   ...
+   [plugin] contracts <version> builtin loaded
    [plugin] greeter 1.0.0 lua loaded
    ...
    ```
 
    A plugin that can't load is listed with the reason (`refused: built for api 2.0`, `missing capability 'teleport'`, ...); the others still load. To switch one plugin off, put an empty file named `disabled` in its folder.
 
-With `plugins = off`, `mod.log` shows `[plugin] 2 found, 2 loaded (plugins = off)`: only the built-in plugins load.
+With `plugins = off`, `mod.log` shows `[plugin] 9 found, 9 loaded (plugins = off)`: only the nine built-in plugins load.
 
 ### Built-in plugins
 
-Some of sc-offline's own features are plugins compiled into `dinput8.dll`. They load first, with `plugins` on or off, and are listed as `builtin` in the `[plugin]` report (`[plugin] loaded teleport <version> (api 1.1) built in`). Their commands are the ones plugins call through the SDK's `invoke`:
+sc-offline's features are nine plugins compiled into `dinput8.dll`: `teleport`, `spawn`, `crew`, `loadout`, `npc`, `ammo`, `quantum`, `build` and `contracts`, loaded in that order. They load first, with `plugins` on or off, and are listed as `builtin` in the `[plugin]` report (`[plugin] loaded teleport <version> (api 1.1) built in`). Each runs its feature's per-tick work from a `tick` subscription, so a fault there switches that feature off (`[plugin] <id> ... crashed`) instead of crashing the game. The menu works as before. Their commands are the ones plugins call through the SDK's `invoke`; a command that ran but couldn't do it (an unknown name, a list not loaded yet) answers `failed` with the reason:
 
 | Command | Does | Key |
 | --- | --- | --- |
 | `teleport.save` | Saves where you're standing to `spawn.txt`; the reply names the spot | **F7** |
 | `teleport.go` | Teleports to the saved spot; the reply says where you went, or why not | **F8** |
 | `spawn.ship <class> <height>` | Spawns a ship `<height>` m (0 to 10000) above you, as the Vehicles tab does, and makes it the Crew & seats target; the status strip says when it's there. An unknown class answers `failed` | |
+| `crew.target` | Makes the ship you're in the Crew & seats target | |
+| `crew.sit <seat>` | Puts you in the target ship's first seat whose name has these words (`pilot`, `turret left`), removing an NPC in it | |
+| `crew.stand_all` | You and every NPC on the target ship get out of the seats | |
+| `crew.fill <npc>` | Puts an NPC of this archetype (`npcs.txt`) in every empty seat of the target ship | |
+| `crew.clear` | Removes every NPC from the target ship's seats | |
+| `crew.power_on` | Sends the game's Flight Ready event to the target ship | |
+| `npc.spawn <npc> <count>` | Spawns 1 to 10 NPCs of an archetype (`npcs.txt`) in front of you | |
+| `npc.clear` | Removes the NPCs you spawned | |
+| `loadout.equip <items>` | Equips items from `items.txt` (separated by spaces or commas, one per slot; the other slots are empty, as in the gear menu) | |
+| `loadout.wear <outfit>` | Wears a Squadron 42 outfit from `outfits.txt` | |
+| `ammo.infinite <on>` | Infinite ammo on or off (the menu's checkbox doesn't follow it) | |
+| `ammo.ship_infinite <on>` | Infinite ship ammo on or off | |
+| `quantum.travel <place> <altitude>` | Teleports you to a place from the Travel tab, `<altitude>` m (100 to 20000) above the ground | |
+| `quantum.bookmark <name>` | Teleports you to a saved spot | |
+| `quantum.save_bookmark <name>` | Saves where you are as a named spot (`bookmarks.txt`); an empty name uses the zone's | |
+| `quantum.scan` | Scans everything the game has loaded into `locations_found.txt` | |
+| `build.toggle` | Build mode on or off | **F6** |
+| `build.undo` | Removes the last object you placed | **Backspace** in build mode |
+| `build.clear` | Removes everything you placed | |
+| `build.place <object> <ahead>` | Places one buildable (`buildables.txt`) `<ahead>` m in front of you (0 = at your feet, up to 100) without entering build mode | |
+| `contracts.status` | How many contracts are known, offered and running, and your wallet's balance | |
 
-The teleport commands need the `teleport` capability and `spawn.ship` needs `spawn.ship`; each is missing when this game build's addresses for it aren't found, and the rest of the plugin system still starts. A built-in owns its id, command prefix and services, so a plugin folder named `teleport` or `spawn` is refused (`the id belongs to a built-in plugin`), whatever its kind.
+Each built-in's commands need the capability named after it (`teleport`, `spawn.ship`, `crew`, `npc`, `loadout`, `ammo`, `quantum`, `build`, `contracts`); one is missing when this game build's addresses for that feature aren't found, and the rest of the plugin system still starts. A built-in owns its id, command prefix and services, so a plugin folder named after one (`teleport`, `spawn`, `crew`, ...) is refused (`the id belongs to a built-in plugin`), whatever its kind.
 
-The `spawn` built-in also runs the spawner's own work every tick (the Vehicles tab's spawns, seat jobs, crew), so a fault there switches off the spawner (`[plugin] spawn ... crashed`) instead of the game. For plugin authors it publishes a service, `spawn.entities` 1.1: a C function table to spawn an entity class near you, look up your entity and ship ids, and (new in 1.1) ask whether an entity id still resolves in the game (`entity_alive`), without going through command replies. A plugin built against 1.0 keeps working; one built against 1.1 checks the table's `size` before calling `entity_alive`. Its header is [`src/builtins/spawn_service.h`](../src/builtins/spawn_service.h); find it with `query_service` (sco_api 1.1). A plugin runs its own code in the game, so only install plugins you trust.
+The `spawn` built-in's tick runs the Vehicles tab's spawns and the seat job that puts you in a seat; the `crew` built-in's runs the Crew & seats actions and crew jobs. For plugin authors it publishes a service, `spawn.entities` 1.1: a C function table to spawn an entity class near you, look up your entity and ship ids, and (new in 1.1) ask whether an entity id still resolves in the game (`entity_alive`), without going through command replies. A plugin built against 1.0 keeps working; one built against 1.1 checks the table's `size` before calling `entity_alive`. Its header is [`src/builtins/spawn_service.h`](../src/builtins/spawn_service.h); find it with `query_service` (sco_api 1.1). A plugin runs its own code in the game, so only install plugins you trust.
 
 The `teleport` built-in publishes `teleport.spatial` 1.0 ([`src/builtins/spatial_service.h`](../src/builtins/spatial_service.h)): your position and orientation in the zone you're in, the zone an entity is in, a zone's name, and positions converted between a zone and the world or between two zones. Zones are the game's nested frames (star system > planet > city or station > ship > room); every id is the game's own 64-bit id and every position is in metres. Each tick the built-in reads your zone chain from the game into sco-core's zone tree, and a zone you ask about that isn't in it is read on the spot; nothing about the game is kept from one tick to the next, so an id that has streamed out simply answers 0. Like `spawn.entities`, it works from the game thread only.
 
