@@ -15,6 +15,7 @@ extern const sco::plugins::Builtin kLoadoutBuiltin;    // loadout_plugin.cpp: lo
 extern const sco::plugins::Builtin kAmmoBuiltin;       // ammo_plugin.cpp: ammo.infinite, ammo.ship_infinite, the ammo tick
 extern const sco::plugins::Builtin kQuantumBuiltin;    // quantum_plugin.cpp: quantum.*, the quantum boost and travel ticks
 extern const sco::plugins::Builtin kBuildBuiltin;      // build_plugin.cpp: build.*, the build-mode tick (F6)
+extern const sco::plugins::Builtin kContractsBuiltin;  // contracts_plugin.cpp: contracts.status, the contracts tick
 
 // True while the spawn built-in is loaded (or crashed): its tick subscription runs ProcessShipMenu,
 // so dllmain doesn't. False when it never loaded, and dllmain runs the spawner tick itself.
@@ -27,6 +28,7 @@ bool LoadoutBuiltinOwnsTick();
 bool AmmoBuiltinOwnsTick();
 bool QuantumBuiltinOwnsTick();
 bool BuildBuiltinOwnsTick();
+bool ContractsBuiltinOwnsTick();
 
 // The index of the entry named `name` (any case) in a list of count names, or -1.
 inline int FindBuiltinName(int count, const char* (*nameAt)(int), const char* name) {
@@ -62,4 +64,4 @@ inline sco_result RegisterBuiltinCommand(const sco_api* api, sco_plugin* self, c
 }
 
 // Every built-in, in load order.
-inline const sco::plugins::Builtin kBuiltins[] = { kTeleportBuiltin, kSpawnBuiltin, kCrewBuiltin, kLoadoutBuiltin, kNpcBuiltin, kAmmoBuiltin, kQuantumBuiltin, kBuildBuiltin };
+inline const sco::plugins::Builtin kBuiltins[] = { kTeleportBuiltin, kSpawnBuiltin, kCrewBuiltin, kLoadoutBuiltin, kNpcBuiltin, kAmmoBuiltin, kQuantumBuiltin, kBuildBuiltin, kContractsBuiltin };

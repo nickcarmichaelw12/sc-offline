@@ -171,6 +171,7 @@ static void SetFeatureCaps() {
     SetCap("quantum.boost", QuantumBoostReady());
     SetCap("quantum", g_tp.ok);   // the Travel tab's requests all go through teleport
     SetCap("build", g_buildOk && SpawnerReady());
+    SetCap("contracts", ContractsReady());
 }
 
 static const sco::plugins::ScriptRuntime kLua{ sco_lua_load, sco_lua_unload };
@@ -279,7 +280,7 @@ static void RunFeatureTicks(DWORD now) {
     ProcessCVars();
     if (!QuantumBuiltinOwnsTick()) { ProcessQuantum(); ProcessTravel(now); }
     ProcessMissions();
-    ProcessContracts();
+    if (!ContractsBuiltinOwnsTick()) ProcessContracts();
     if (!AmmoBuiltinOwnsTick()) ProcessAmmo();
     TeleportTick(now);
 }

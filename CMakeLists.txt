@@ -120,6 +120,7 @@ add_library(dinput8 SHARED
   src/builtins/ammo_plugin.cpp
   src/builtins/quantum_plugin.cpp
   src/builtins/build_plugin.cpp
+  src/builtins/contracts_plugin.cpp
   # Manifest EnableSegmentHeap.
   src/dinput8.manifest
 )

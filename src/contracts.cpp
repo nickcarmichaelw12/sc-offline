@@ -2673,3 +2673,24 @@ void ProcessContracts() {
     UpdateRunningSafe(GetTickCount());
     ProcessAccepted();
 }
+
+bool ContractsReady() { return g_queryReply && g_missionSystem; }
+
+static long long WalletBalance() {
+    __try {
+        const uintptr_t wallet = PlayerWallet();
+        return wallet ? static_cast<long long>(Rd<int64_t>(wallet + kWalletUec)) : -1;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1;
+    }
+}
+
+ContractsStatus ReadContractsStatus() {
+    ContractsStatus s;
+    s.known = g_defCount;
+    for (int i = 0; i < g_defCount; ++i) s.listed += g_defs[i].listed;
+    s.running = g_runningCount;
+    s.starting = g_workingCount;
+    s.wallet = WalletBalance();
+    return s;
+}
