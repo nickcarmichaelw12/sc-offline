@@ -165,6 +165,7 @@ static void SetFeatureCaps() {
     SetCap("npc", SpawnerReady());
     SetCap("outfits", g_outfitsOk);
     SetCap("loadout", g_outfitsOk);   // the gear menu's loader, which outfits ride
+    SetCap("ammo", AmmoReady());
     SetCap("quantum.drive", QuantumDriveReady());
     SetCap("quantum.boost", QuantumBoostReady());
 }
@@ -276,7 +277,7 @@ static void RunFeatureTicks(DWORD now) {
     ProcessQuantum();
     ProcessMissions();
     ProcessContracts();
-    ProcessAmmo();
+    if (!AmmoBuiltinOwnsTick()) ProcessAmmo();
     TeleportTick(now);
     ProcessTravel(now);
 }
