@@ -163,3 +163,15 @@ set_target_properties(spawn_probe PROPERTIES
   LIBRARY_OUTPUT_DIRECTORY "${_probe_dir}/$<0:>"
   ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib/test-plugins")
 configure_file(tools/test-plugins/spawn_probe/plugin.ini "${_probe_dir}/plugin.ini" COPYONLY)
+
+# builtins_probe exercises the feature built-ins' commands in game (crew, npc, loadout, ammo, quantum,
+# build, contracts); same layout as spawn_probe.
+add_library(builtins_probe SHARED tools/test-plugins/builtins_probe/builtins_probe.c)
+target_include_directories(builtins_probe PRIVATE external/sco-core/include)
+target_link_libraries(builtins_probe PRIVATE user32)
+set(_bprobe_dir "${CMAKE_BINARY_DIR}/test-plugins/builtins_probe")
+set_target_properties(builtins_probe PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${_bprobe_dir}/$<0:>"
+  LIBRARY_OUTPUT_DIRECTORY "${_bprobe_dir}/$<0:>"
+  ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib/test-plugins")
+configure_file(tools/test-plugins/builtins_probe/plugin.ini "${_bprobe_dir}/plugin.ini" COPYONLY)
