@@ -5,8 +5,10 @@
 // travel request needs). The built-in's tick subscription runs ProcessQuantum (the quantum boost
 // input, sounds and effects) and ProcessTravel (places, bookmarks, the scan). The mechanics, the
 // boost detours and the Gladius drive patch stay in quantum.cpp and travel.cpp; their readiness
-// stays the quantum.drive and quantum.boost capabilities.
+// stays the quantum.drive and quantum.boost capabilities. The saved spots live in the built-in's
+// storage (data/storage/quantum.db, travel.cpp), opened here.
 #include "builtins.h"
+#include "builtin_store.h"
 #include "../quantum.h"
 #include "../teleport.h"
 #include "../travel.h"
@@ -54,7 +56,7 @@ sco_result Travel(const sco_arg* args, uint32_t, void*, char* reply, uint32_t si
 sco_result Bookmark(const sco_arg* args, uint32_t, void*, char* reply, uint32_t size) {
     const char* name = args[0].v.s;
     if (!name || !*name) {
-        snprintf(reply, size, "Name a saved spot (bookmarks.txt)");
+        snprintf(reply, size, "Name a saved spot (the Travel tab's list)");
         return SCO_BAD_ARG;
     }
     const int n = Travel_GetBookmarks(g_marks, kMaxBookmarks);
@@ -114,17 +116,21 @@ sco_result QuantumLoad(const sco_api* api, sco_plugin* self) {
     if (r == SCO_OK) r = RegisterBuiltinCommand(api, self, kCap, "quantum.bookmark", "Go to saved spot",
         "Teleports you to one of the Travel tab's saved spots", Bookmark, mark, 1);
     if (r == SCO_OK) r = RegisterBuiltinCommand(api, self, kCap, "quantum.save_bookmark", "Save this spot",
-        "Saves where you are as a named spot in bookmarks.txt", SaveBookmark, save, 1);
+        "Saves where you are as a named spot in the Travel tab", SaveBookmark, save, 1);
     if (r == SCO_OK) r = RegisterBuiltinCommand(api, self, kCap, "quantum.scan", "Scan places",
         "Lists everything the game has loaded and writes it to locations_found.txt", Scan);
     if (r == SCO_OK) r = api->subscribe(self, "tick", OnTick, nullptr);
     if (r != SCO_OK) return r;   // the host releases what was registered
+    g_quantumStore.Open(api, self);   // before the first tick, which loads the saved spots
     g_ticking = true;
     return SCO_OK;
 }
 
 // A crash leaves g_ticking set, so dllmain doesn't take the quantum and travel ticks back.
-void QuantumUnload() { g_ticking = false; }
+void QuantumUnload() {
+    g_quantumStore.Close();
+    g_ticking = false;
+}
 
 }  // namespace
 

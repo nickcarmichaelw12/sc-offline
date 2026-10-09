@@ -2,6 +2,7 @@
 #include "teleport.h"
 #include "spawner.h"
 #include "menu.h"
+#include "builtins/builtin_store.h"
 #include <share.h>
 #include <cctype>
 #include <algorithm>
@@ -286,7 +287,7 @@ static void AppendFoundPlace(const TravelPlace& p) {
     fclose(f);
 }
 
-static void SaveBookmarks() {
+static void WriteBookmarksFile() {
     char path[MAX_PATH];
     if (!DataFilePath(path, sizeof(path), "bookmarks.txt")) return;
     FILE* f = _fsopen(path, "w", _SH_DENYNO);
@@ -302,13 +303,14 @@ static void SaveBookmarks() {
     fclose(f);
 }
 
-static void LoadBookmarks() {
+static void ReadBookmarksFile() {
     char path[MAX_PATH];
     if (!DataFilePath(path, sizeof(path), "bookmarks.txt")) return;
     FILE* f = _fsopen(path, "r", _SH_DENYNO);
     if (!f) return;
     char line[256];
     AcquireSRWLockExclusive(&g_travelLock);
+    g_markCount = 0;
     int cur = -1;
     while (fgets(line, sizeof(line), f)) {
         Trim(line);
@@ -334,7 +336,90 @@ static void LoadBookmarks() {
     g_markCount = kept;
     ReleaseSRWLockExclusive(&g_travelLock);
     fclose(f);
-    Log("[travel] %d saved spots", g_markCount);
+}
+
+// The saved spots in the quantum built-in's storage (data/storage/quantum.db): one row each, in the
+// list's order, the spot as bookmarks.txt's "spot" lines. "bookmarks.txt.time" is bookmarks.txt's
+// last-write time when it was imported (builtins/builtin_store.h has the rule). bookmarks.txt is no
+// longer written while storage works.
+constexpr const char* kMarksTable =
+    "CREATE TABLE IF NOT EXISTS bookmarks(pos INTEGER PRIMARY KEY, system TEXT NOT NULL, name TEXT NOT NULL, spots TEXT NOT NULL)";
+constexpr const char* kMarksTimeKey = "bookmarks.txt.time";
+
+// The whole list in one transaction: a crash leaves the old list or the new one, never half of it.
+// fileTime 0 leaves the recorded time as it is. Game thread (it owns g_marks).
+static bool StoreBookmarks(int64_t fileTime) {
+    using sco::sdk::SqlInt;
+    using sco::sdk::SqlText;
+    BuiltinStore& st = g_quantumStore;
+    sco::sdk::StorageTransaction tx(st.S());
+    sco_result r = tx.Result();
+    if (r == SCO_OK) r = st.S().Exec(kMarksTable);
+    if (r == SCO_OK) r = st.S().Exec("DELETE FROM bookmarks");
+    std::string spots;
+    for (int i = 0; r == SCO_OK && i < g_markCount; ++i) {
+        SpotToText(g_markSpots[i], spots);
+        r = st.S().Exec("INSERT INTO bookmarks(pos, system, name, spots) VALUES (?, ?, ?, ?)",
+                        { SqlInt(i), SqlText(g_marks[i].system), SqlText(g_marks[i].name), SqlText(spots) });
+    }
+    if (r == SCO_OK && fileTime) r = st.PutInt(kMarksTimeKey, fileTime);
+    if (r == SCO_OK) r = tx.Commit();
+    if (r != SCO_OK) st.Failed("saving the saved spots", r, "using bookmarks.txt");
+    return r == SCO_OK;
+}
+
+static sco_result ReadStoredBookmarks() {
+    sco::sdk::Storage& s = g_quantumStore.S();
+    sco_result r = s.Exec(kMarksTable);
+    if (r != SCO_OK) return r;
+    sco::sdk::StorageCursor c = s.Query("SELECT system, name, spots FROM bookmarks ORDER BY pos");
+    if (!c) return c.Result();
+    std::string system, name, spots;
+    AcquireSRWLockExclusive(&g_travelLock);
+    g_markCount = 0;
+    while ((r = c.Next()) == SCO_OK && g_markCount < kMaxBookmarks) {
+        Spot spot;
+        if (c.Text(0, system) != SCO_OK || c.Text(1, name) != SCO_OK || c.Text(2, spots) != SCO_OK ||
+            !SpotFromText(spots.c_str(), spot, false))
+            continue;
+        TravelBookmark& m = g_marks[g_markCount];
+        m = {};
+        strncpy_s(m.system, system.c_str(), _TRUNCATE);
+        strncpy_s(m.name, name.c_str(), _TRUNCATE);
+        g_markSpots[g_markCount++] = spot;
+    }
+    ReleaseSRWLockExclusive(&g_travelLock);
+    return r == SCO_OK || r == SCO_NOT_FOUND ? SCO_OK : r;
+}
+
+static void SaveBookmarks() {
+    if (!(g_quantumStore && StoreBookmarks(0))) WriteBookmarksFile();
+}
+
+// Storage, importing a bookmarks.txt it hasn't seen; bookmarks.txt as before without storage.
+static void LoadBookmarks() {
+    const char* from = "bookmarks.txt";
+    BuiltinStore& st = g_quantumStore;
+    if (!st) {
+        ReadBookmarksFile();
+    } else {
+        char path[MAX_PATH];
+        const int64_t fileTime = DataFilePath(path, sizeof(path), "bookmarks.txt") ? FileWriteTime(path) : 0;
+        int64_t seen = 0;
+        const sco_result rs = st.GetInt(kMarksTimeKey, seen);
+        if (fileTime && (rs != SCO_OK || seen != fileTime)) {
+            ReadBookmarksFile();
+            if (StoreBookmarks(fileTime))
+                Log("[storage] imported bookmarks.txt into quantum (%d saved spots)%s", g_markCount,
+                    rs == SCO_OK ? " (bookmarks.txt changed since the last import)" : "");
+        } else if (const sco_result r = ReadStoredBookmarks(); r == SCO_OK) {
+            from = "storage";
+        } else {
+            st.Failed("reading the saved spots", r, "using bookmarks.txt");
+            ReadBookmarksFile();
+        }
+    }
+    Log("[travel] %d saved spots (%s)", g_markCount, from);
 }
 
 // =============================================================================================
