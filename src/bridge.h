@@ -8,6 +8,8 @@ void Bridge_RequestSpawn(const BridgeShip& ship);
 bool Bridge_RequestAtc(const BridgeShip& ship, uint64_t atc, uint64_t player);
 bool Bridge_TakeAtc(char* cls, size_t size, uint64_t& atc, uint64_t& player);
 void Bridge_AtcUnconfirmed();
+// Read-only diagnostic copy; does not advance the operation or journal.
+void Bridge_DiagnosticOperation(char* operation, size_t size);
 bool Bridge_TakeSpawn(char* cls, size_t size);
 void Bridge_ConfirmedEntity(uint64_t entity);
 void Bridge_Uncertain();

@@ -1,0 +1,260 @@
+--- a/src/services.cpp
++++ b/src/services.cpp
+@@ -4,6 +4,7 @@
+ #include "hooks.h"
+ #include "hangar_future.h"
+ #include "hangar_lookup.h"
++#include "spawner.h"
+ 
+ constexpr int kFakeServices = 32;
+ constexpr int kFakeSlots = 96;
+@@ -142,6 +143,8 @@
+ uint8_t* FindServicesObject(const Section& text) {
+     int n = 0;
+     uint8_t* first = FindUniquePattern(text, "40 55 53 41 55 41 57 48 8D AC 24 B8 FE FF FF 48 81 EC 48 02 00 00 45 33 ED 44 38 2D ?? ?? ?? ?? 0F 85 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8B 01 FF 50 18 48 8B 08 48 8B 51 40", n);
++    static volatile LONG samples = 0;
++    if (InterlockedIncrement(&samples) <= 5) Log("[hangar-diag] services_object_candidates=%d", n);
+     if (!first) return nullptr;
+     g_service = reinterpret_cast<uintptr_t*>(first + 0x2D + Rel32(first + 0x29));
+     static bool filled = false;
+@@ -173,6 +176,26 @@
+ using RequestListFn = uintptr_t(__fastcall*)(uintptr_t manager, uintptr_t out, uint64_t owner);
+ static RequestListFn g_requestListOrig = nullptr;
+ 
++static void TraceHangarEntry(const char* boundary, LONG sample, uint64_t owner, uintptr_t request) {
++    if (sample > 20) return;
++    uint64_t raw = 0, entity = 0;
++    int origin = -1;
++    const char* hubKind = "unreadable";
++    bool readable = false;
++    __try {
++        raw = LocalPlayerId();
++        entity = LocalPlayerEntityId();
++        if (request) origin = *reinterpret_cast<uint32_t*>(request + 8);
++        const uintptr_t service = g_service ? *g_service : 0;
++        const uintptr_t hub = service && g_realHub ? g_realHub(service) : 0;
++        hubKind = !service ? "no-service" : !g_realHub ? "getter-unavailable" :
++            !hub ? "missing" : hub == StandInHub() ? "stand-in" : "real";
++        readable = true;
++    } __except (EXCEPTION_EXECUTE_HANDLER) {}
++    Log("[hangar-diag] %s #%ld entry owner=%llu raw_player=%llu entity_player=%llu raw_match=%d entity_match=%d origin=%d hub=%s readable=%d",
++        boundary, sample, owner, raw, entity, owner && owner == raw, owner && owner == entity, origin, hubKind, readable);
++}
++
+ static void EnsureHangarHub() {
+     __try {
+         if (SwapHubSlot(&InstanceRequestHub, &g_realHub)) Log("[hangar] installed scoped offline hangar lookup adapter");
+@@ -180,8 +203,11 @@
+ }
+ 
+ static uintptr_t __fastcall RequestInstanceHook(uintptr_t manager, uint64_t owner, uintptr_t request) {
++    static volatile LONG samples = 0;
++    const LONG sample = InterlockedIncrement(&samples);
+     Log("[hangar] native instance request entered; awaiting native creation result");
+     EnsureHangarHub();
++    TraceHangarEntry("instance", sample, owner, request);
+     __try {
+         const uintptr_t service = g_service ? *g_service : 0;
+         const bool offline = service && g_realHub && !g_realHub(service);
+@@ -201,15 +227,20 @@
+     uintptr_t result = 0;
+     __try { result = g_requestInstanceOrig(manager, owner, request); }
+     __finally { --t_inInstanceRequest; }
++    if (sample <= 20) Log("[hangar-diag] instance #%ld returned; not async completion", sample);
+     return result;
+ }
+ 
+ static uintptr_t __fastcall RequestListHook(uintptr_t manager, uintptr_t out, uint64_t owner) {
++    static volatile LONG samples = 0;
++    const LONG sample = InterlockedIncrement(&samples);
+     EnsureHangarHub();
++    TraceHangarEntry("list", sample, owner, 0);
+     ++t_inInstanceRequest;
+     uintptr_t result = 0;
+     __try { result = g_requestListOrig(manager, out, owner); }
+     __finally { --t_inInstanceRequest; }
++    if (sample <= 20) Log("[hangar-diag] list #%ld returned; not async completion", sample);
+     Log("[hangar] native destination-list request returned; destination/instance readiness is not yet confirmed");
+     return result;
+ }
+@@ -243,24 +274,51 @@
+     uint8_t* ctor = fn && BytesMatch(fn + 0x404, "E8") ? fn + 0x409 + Rel32(fn + 0x405) : nullptr;
+     uint8_t* thunk = ctor && BytesMatch(ctor + 0xAB, "48 8D 05") ? ctor + 0xB2 + Rel32(ctor + 0xAE) : nullptr;
+     uint8_t* continuation = thunk && BytesMatch(thunk + 0x1C, "E8") ? thunk + 0x21 + Rel32(thunk + 0x1D) : nullptr;
+-    if (!FindServicesObject(text) || !fn || !list || !bind || !continuation
+-        || !BytesMatch(fn, "48 89 5C 24 10 48 89 4C 24 08 55 56 57")
+-        || !BytesMatch(fn + 0x3C, "41 8B 58 08")
+-        || !BytesMatch(list + 0x5E8, "FF 50 10") || !BytesMatch(list + 0x66A, "E8")
+-        || list + 0x66F + Rel32(list + 0x66B) != bind
+-        || !BytesMatch(bind + 0x89, "44 38 60 29")
+-        || !BytesMatch(bind + 0x97, "44 38 60 28")
+-        || !BytesMatch(bind + 0xA3, "48 81 C7 C8 00 00 00")
+-        || !BytesMatch(bind + 0xB0, "38 47 50")
+-        || !BytesMatch(continuation + 0x2F93, "41 83 7C 24 08 04 0F 84 ?? ?? ?? ?? 4D 8B 6C 24 50 4D 85 ED")) {
++    int rawCandidates = 0;
++    for (size_t i = 0; i + sizeof(hangarlookup::Prologue) <= text.size; ++i)
++        if (!memcmp(text.base + i, hangarlookup::Prologue, sizeof(hangarlookup::Prologue))) ++rawCandidates;
++    Log("[hangar-diag] resolve raw_list_candidates=%d qualified_list_candidates=%d", rawCandidates, count);
++    Log("[hangar-diag] resolve request=%d binder=%d constructor=%d thunk=%d continuation=%d",
++        fn != nullptr, bind != nullptr, ctor != nullptr, thunk != nullptr, continuation != nullptr);
++    bool compatible = true;
++    const auto check = [&compatible](const char* name, bool ok) {
++        if (!ok) { compatible = false; Log("[hangar-diag] compatibility FAIL %s", name); }
++    };
++    check("services-object", FindServicesObject(text) != nullptr);
++    check("request-function", fn != nullptr);
++    check("list-function", list != nullptr);
++    check("typed-binder", bind != nullptr);
++    check("creation-continuation", continuation != nullptr);
++    // Null dependencies fail their own predicate; do not dereference them.
++    if (fn) {
++        check("request-prologue", BytesMatch(fn, "48 89 5C 24 10 48 89 4C 24 08 55 56 57"));
++        check("request-origin-load", BytesMatch(fn + 0x3C, "41 8B 58 08"));
++    }
++    if (list) {
++        check("list-service-call", BytesMatch(list + 0x5E8, "FF 50 10"));
++        const bool call = BytesMatch(list + 0x66A, "E8");
++        check("list-binder-call", call);
++        check("list-binder-target", call && bind && list + 0x66F + Rel32(list + 0x66B) == bind);
++    }
++    if (bind) {
++        check("binder-abandoned-flag", BytesMatch(bind + 0x89, "44 38 60 29"));
++        check("binder-ready-flag", BytesMatch(bind + 0x97, "44 38 60 28"));
++        check("binder-result-offset", BytesMatch(bind + 0xA3, "48 81 C7 C8 00 00 00"));
++        check("binder-result-tag", BytesMatch(bind + 0xB0, "38 47 50"));
++    }
++    if (continuation) check("continuation-elevator-branch", BytesMatch(continuation + 0x2F93,
++        "41 83 7C 24 08 04 0F 84 ?? ?? ?? ?? 4D 8B 6C 24 50 4D 85 ED"));
++    if (!compatible) {
++        Log("[hangar-diag] hooks instance=not-attempted list=not-attempted reason=compatibility");
+         Log("[!] hangar lookup ABI not recognized; adapter disabled (request=%d binder=%d qualified_lists=%d continuation=%d)",
+             fn != nullptr, bind != nullptr, count, continuation != nullptr);
+         return;
+     }
+-    if (!HookFunction(fn, 10, reinterpret_cast<void*>(&RequestInstanceHook), reinterpret_cast<void**>(&g_requestInstanceOrig)))
+-        Log("[!] hangar instance request hook failed");
++    const bool instanceInstalled = HookFunction(fn, 10, reinterpret_cast<void*>(&RequestInstanceHook), reinterpret_cast<void**>(&g_requestInstanceOrig));
++    if (!instanceInstalled) Log("[!] hangar instance request hook failed");
+     else Log("[hangar] native instance request hook installed");
+-    if (!HookFunction(list, 10, reinterpret_cast<void*>(&RequestListHook), reinterpret_cast<void**>(&g_requestListOrig)))
+-        Log("[!] hangar destination-list hook failed");
++    const bool listInstalled = HookFunction(list, 10, reinterpret_cast<void*>(&RequestListHook), reinterpret_cast<void**>(&g_requestListOrig));
++    if (!listInstalled) Log("[!] hangar destination-list hook failed");
+     else Log("[hangar] native destination-list hook installed (qualified matches=%d)", count);
++    Log("[hangar-diag] hooks instance=%s list=%s", instanceInstalled ? "installed" : "failed", listInstalled ? "installed" : "failed");
+ }
+--- a/src/hooks.cpp
++++ b/src/hooks.cpp
+@@ -4,6 +4,7 @@
+ #include "offline_urn.h"
+ #include "fleet_response_policy.h"
+ #include "teleport.h"
++#include "spawner.h"
+ #include <initializer_list>
+ #include <nmmintrin.h>
+ #include <share.h>
+@@ -737,11 +738,21 @@
+ }
+ 
+ const char* RequestShipFromAtc(uint64_t atcEntity, uint64_t player, const char* shipClass) {
+-    if (!g_getATCComp || !g_requestTakingOff) return "the ATC functions weren't found";
++    static volatile LONG samples = 0;
++    const LONG sample = InterlockedIncrement(&samples);
++    char operation[33] = {};
++    if (sample <= 20) Bridge_DiagnosticOperation(operation, sizeof(operation));
++    if (!g_getATCComp || !g_requestTakingOff) {
++        if (sample <= 20) Log("[asop-diag] resolve #%ld op=%s unavailable resolver=%d takeoff=%d",
++            sample, operation, g_getATCComp != nullptr, g_requestTakingOff != nullptr);
++        return "the ATC functions weren't found";
++    }
+     __try {
+         uint64_t handle[2] = {};
+         g_getATCComp(handle, atcEntity);
+         const uintptr_t atc = handle[0] & kPtrMask;
++        if (sample <= 20) Log("[asop-diag] resolve #%ld op=%s terminal_atc=%llu passed_player=%llu component=%s",
++            sample, operation, atcEntity, player, atc ? "resolved" : "null");
+         if (!atc) return "this terminal has no spaceport ATC";
+         if (!player) return "player not spawned";
+         alignas(16) uint8_t location[32] = {};
+@@ -756,11 +767,14 @@
+         g_strDtor(location);
+         return nullptr;
+     } __except (EXCEPTION_EXECUTE_HANDLER) {
++        if (sample <= 20) Log("[asop-diag] request #%ld op=%s fault; resolution/dispatch outcome uncertain", sample, operation);
+         return "fault while asking the ATC";
+     }
+ }
+ 
+ static void QueueOwnedAtc(uintptr_t asop, int i) {
++    static volatile LONG samples = 0;
++    const LONG sample = InterlockedIncrement(&samples);
+     // Validate the immutable session binding against the latest server snapshot.
+     // Never reinterpret an old UI slot as another ship after a refresh.
+     BridgeShip current[256];
+@@ -773,12 +787,23 @@
+     uint64_t atc = 0, player = 0;
+     __try { atc = Rd<uint64_t>(asop + kAsopAtcId); player = LocalPlayerId(); }
+     __except (EXCEPTION_EXECUTE_HANDLER) {}
++    if (sample <= 20) {
++        const uint64_t entity = LocalPlayerEntityId();
++        Log("[asop-diag] queue #%ld ship=%s terminal_atc=%llu passed_player=%llu entity_player=%llu equal=%d resolver=%d takeoff=%d",
++            sample, current[selected].id, atc, player, entity, player && player == entity,
++            g_getATCComp != nullptr, g_requestTakingOff != nullptr);
++    }
+     if (!g_getATCComp || !g_requestTakingOff || !atc || !player) {
+         Log("[delivery] blocked before reservation: native ATC/player context unavailable"); return;
+     }
+-    if (Bridge_RequestAtc(current[selected], atc, player))
++    if (Bridge_RequestAtc(current[selected], atc, player)) {
++        if (sample <= 20) {
++            char operation[33] = {};
++            Bridge_DiagnosticOperation(operation, sizeof(operation));
++            Log("[asop-diag] queue #%ld accepted op=%s", sample, operation);
++        }
+         Log("[delivery] owned ship queued for server reservation; no ATC request or deployment confirmed yet");
+-    else Log("[delivery] blocked: bridge busy, unresolved journal, or reservation could not start");
++    } else Log("[delivery] blocked: bridge busy, unresolved journal, or reservation could not start");
+ }
+ 
+ static void __fastcall Hook_RetrieveVehicle(uintptr_t asop, uintptr_t slot) {
+@@ -813,6 +838,15 @@
+     uint64_t atc = 0, player = 0, currentPlayer = 0;
+     if (!Bridge_TakeAtc(cls, sizeof(cls), atc, player)) return;
+     __try { currentPlayer = LocalPlayerId(); } __except (EXCEPTION_EXECUTE_HANDLER) {}
++    static volatile LONG samples = 0;
++    const LONG sample = InterlockedIncrement(&samples);
++    if (sample <= 20) {
++        char operation[33] = {};
++        Bridge_DiagnosticOperation(operation, sizeof(operation));
++        const uint64_t entity = LocalPlayerEntityId();
++        Log("[asop-diag] dispatch #%ld op=%s terminal_atc=%llu passed_player=%llu current_raw_player=%llu entity_player=%llu equal=%d",
++            sample, operation, atc, player, currentPlayer, entity, player && player == entity);
++    }
+     if (!currentPlayer || currentPlayer != player)
+         Log("[delivery] ATC dispatch blocked: player changed while reservation was pending");
+     else if (const char* err = RequestShipFromAtc(atc, player, cls))
+--- a/src/bridge.cpp
++++ b/src/bridge.cpp
+@@ -114,5 +114,11 @@
+     ReleaseSRWLockExclusive(&g_bridgeLock);return ok;
+ }
+ void Bridge_AtcUnconfirmed(){Status("ATC outcome unconfirmed. Reservation retained; no deployment saved. Restart/recover before retry.",4);}
++void Bridge_DiagnosticOperation(char* operation, size_t size) {
++    if (!operation || !size) return;
++    AcquireSRWLockShared(&g_bridgeLock);
++    strncpy_s(operation, size, g_operation, _TRUNCATE);
++    ReleaseSRWLockShared(&g_bridgeLock);
++}
+ void Bridge_ConfirmedEntity(uint64_t entity){AcquireSRWLockExclusive(&g_bridgeLock);if(g_phase!=3||g_atcRoute||!entity){ReleaseSRWLockExclusive(&g_bridgeLock);return;}g_entity=entity;g_reserve=false;g_phase=1;ReleaseSRWLockExclusive(&g_bridgeLock);Launch();}
+ void Bridge_Uncertain(){Status("Spawn outcome uncertain. Reservation kept; no retry. Keep bridge-pending.txt for recovery.",4);}
+--- a/src/bridge.h
++++ b/src/bridge.h
+@@ -8,6 +8,8 @@
+ bool Bridge_RequestAtc(const BridgeShip& ship, uint64_t atc, uint64_t player);
+ bool Bridge_TakeAtc(char* cls, size_t size, uint64_t& atc, uint64_t& player);
+ void Bridge_AtcUnconfirmed();
++// Read-only diagnostic copy; does not advance the operation or journal.
++void Bridge_DiagnosticOperation(char* operation, size_t size);
+ bool Bridge_TakeSpawn(char* cls, size_t size);
+ void Bridge_ConfirmedEntity(uint64_t entity);
+ void Bridge_Uncertain();

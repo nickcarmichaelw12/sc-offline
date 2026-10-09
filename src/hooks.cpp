@@ -4,6 +4,7 @@
 #include "offline_urn.h"
 #include "fleet_response_policy.h"
 #include "teleport.h"
+#include "spawner.h"
 #include <initializer_list>
 #include <nmmintrin.h>
 #include <share.h>
@@ -737,11 +738,21 @@ static int SlotShipIndex(uintptr_t slot) {
 }
 
 const char* RequestShipFromAtc(uint64_t atcEntity, uint64_t player, const char* shipClass) {
-    if (!g_getATCComp || !g_requestTakingOff) return "the ATC functions weren't found";
+    static volatile LONG samples = 0;
+    const LONG sample = InterlockedIncrement(&samples);
+    char operation[33] = {};
+    if (sample <= 20) Bridge_DiagnosticOperation(operation, sizeof(operation));
+    if (!g_getATCComp || !g_requestTakingOff) {
+        if (sample <= 20) Log("[asop-diag] resolve #%ld op=%s unavailable resolver=%d takeoff=%d",
+            sample, operation, g_getATCComp != nullptr, g_requestTakingOff != nullptr);
+        return "the ATC functions weren't found";
+    }
     __try {
         uint64_t handle[2] = {};
         g_getATCComp(handle, atcEntity);
         const uintptr_t atc = handle[0] & kPtrMask;
+        if (sample <= 20) Log("[asop-diag] resolve #%ld op=%s terminal_atc=%llu passed_player=%llu component=%s",
+            sample, operation, atcEntity, player, atc ? "resolved" : "null");
         if (!atc) return "this terminal has no spaceport ATC";
         if (!player) return "player not spawned";
         alignas(16) uint8_t location[32] = {};
@@ -756,11 +767,14 @@ const char* RequestShipFromAtc(uint64_t atcEntity, uint64_t player, const char* 
         g_strDtor(location);
         return nullptr;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
+        if (sample <= 20) Log("[asop-diag] request #%ld op=%s fault; resolution/dispatch outcome uncertain", sample, operation);
         return "fault while asking the ATC";
     }
 }
 
 static void QueueOwnedAtc(uintptr_t asop, int i) {
+    static volatile LONG samples = 0;
+    const LONG sample = InterlockedIncrement(&samples);
     // Validate the immutable session binding against the latest server snapshot.
     // Never reinterpret an old UI slot as another ship after a refresh.
     BridgeShip current[256];
@@ -773,12 +787,23 @@ static void QueueOwnedAtc(uintptr_t asop, int i) {
     uint64_t atc = 0, player = 0;
     __try { atc = Rd<uint64_t>(asop + kAsopAtcId); player = LocalPlayerId(); }
     __except (EXCEPTION_EXECUTE_HANDLER) {}
+    if (sample <= 20) {
+        const uint64_t entity = LocalPlayerEntityId();
+        Log("[asop-diag] queue #%ld ship=%s terminal_atc=%llu passed_player=%llu entity_player=%llu equal=%d resolver=%d takeoff=%d",
+            sample, current[selected].id, atc, player, entity, player && player == entity,
+            g_getATCComp != nullptr, g_requestTakingOff != nullptr);
+    }
     if (!g_getATCComp || !g_requestTakingOff || !atc || !player) {
         Log("[delivery] blocked before reservation: native ATC/player context unavailable"); return;
     }
-    if (Bridge_RequestAtc(current[selected], atc, player))
+    if (Bridge_RequestAtc(current[selected], atc, player)) {
+        if (sample <= 20) {
+            char operation[33] = {};
+            Bridge_DiagnosticOperation(operation, sizeof(operation));
+            Log("[asop-diag] queue #%ld accepted op=%s", sample, operation);
+        }
         Log("[delivery] owned ship queued for server reservation; no ATC request or deployment confirmed yet");
-    else Log("[delivery] blocked: bridge busy, unresolved journal, or reservation could not start");
+    } else Log("[delivery] blocked: bridge busy, unresolved journal, or reservation could not start");
 }
 
 static void __fastcall Hook_RetrieveVehicle(uintptr_t asop, uintptr_t slot) {
@@ -813,6 +838,15 @@ void ProcessAtcDelivery() {
     uint64_t atc = 0, player = 0, currentPlayer = 0;
     if (!Bridge_TakeAtc(cls, sizeof(cls), atc, player)) return;
     __try { currentPlayer = LocalPlayerId(); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    static volatile LONG samples = 0;
+    const LONG sample = InterlockedIncrement(&samples);
+    if (sample <= 20) {
+        char operation[33] = {};
+        Bridge_DiagnosticOperation(operation, sizeof(operation));
+        const uint64_t entity = LocalPlayerEntityId();
+        Log("[asop-diag] dispatch #%ld op=%s terminal_atc=%llu passed_player=%llu current_raw_player=%llu entity_player=%llu equal=%d",
+            sample, operation, atc, player, currentPlayer, entity, player && player == entity);
+    }
     if (!currentPlayer || currentPlayer != player)
         Log("[delivery] ATC dispatch blocked: player changed while reservation was pending");
     else if (const char* err = RequestShipFromAtc(atc, player, cls))

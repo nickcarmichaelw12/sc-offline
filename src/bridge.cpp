@@ -114,5 +114,11 @@ bool Bridge_TakeAtc(char* cls,size_t size,uint64_t& atc,uint64_t& player) {
     ReleaseSRWLockExclusive(&g_bridgeLock);return ok;
 }
 void Bridge_AtcUnconfirmed(){Status("ATC outcome unconfirmed. Reservation retained; no deployment saved. Restart/recover before retry.",4);}
+void Bridge_DiagnosticOperation(char* operation, size_t size) {
+    if (!operation || !size) return;
+    AcquireSRWLockShared(&g_bridgeLock);
+    strncpy_s(operation, size, g_operation, _TRUNCATE);
+    ReleaseSRWLockShared(&g_bridgeLock);
+}
 void Bridge_ConfirmedEntity(uint64_t entity){AcquireSRWLockExclusive(&g_bridgeLock);if(g_phase!=3||g_atcRoute||!entity){ReleaseSRWLockExclusive(&g_bridgeLock);return;}g_entity=entity;g_reserve=false;g_phase=1;ReleaseSRWLockExclusive(&g_bridgeLock);Launch();}
 void Bridge_Uncertain(){Status("Spawn outcome uncertain. Reservation kept; no retry. Keep bridge-pending.txt for recovery.",4);}

@@ -3,6 +3,8 @@
 #include "services.h"
 #include "hooks.h"
 #include "hangar_future.h"
+#include "hangar_lookup.h"
+#include "spawner.h"
 
 constexpr int kFakeServices = 32;
 constexpr int kFakeSlots = 96;
@@ -141,6 +143,8 @@ uintptr_t StandInHub() { return reinterpret_cast<uintptr_t>(&g_fakeServices[0]);
 uint8_t* FindServicesObject(const Section& text) {
     int n = 0;
     uint8_t* first = FindUniquePattern(text, "40 55 53 41 55 41 57 48 8D AC 24 B8 FE FF FF 48 81 EC 48 02 00 00 45 33 ED 44 38 2D ?? ?? ?? ?? 0F 85 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8B 01 FF 50 18 48 8B 08 48 8B 51 40", n);
+    static volatile LONG samples = 0;
+    if (InterlockedIncrement(&samples) <= 5) Log("[hangar-diag] services_object_candidates=%d", n);
     if (!first) return nullptr;
     g_service = reinterpret_cast<uintptr_t*>(first + 0x2D + Rel32(first + 0x29));
     static bool filled = false;
@@ -172,6 +176,26 @@ static RequestInstanceFn g_requestInstanceOrig = nullptr;
 using RequestListFn = uintptr_t(__fastcall*)(uintptr_t manager, uintptr_t out, uint64_t owner);
 static RequestListFn g_requestListOrig = nullptr;
 
+static void TraceHangarEntry(const char* boundary, LONG sample, uint64_t owner, uintptr_t request) {
+    if (sample > 20) return;
+    uint64_t raw = 0, entity = 0;
+    int origin = -1;
+    const char* hubKind = "unreadable";
+    bool readable = false;
+    __try {
+        raw = LocalPlayerId();
+        entity = LocalPlayerEntityId();
+        if (request) origin = *reinterpret_cast<uint32_t*>(request + 8);
+        const uintptr_t service = g_service ? *g_service : 0;
+        const uintptr_t hub = service && g_realHub ? g_realHub(service) : 0;
+        hubKind = !service ? "no-service" : !g_realHub ? "getter-unavailable" :
+            !hub ? "missing" : hub == StandInHub() ? "stand-in" : "real";
+        readable = true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    Log("[hangar-diag] %s #%ld entry owner=%llu raw_player=%llu entity_player=%llu raw_match=%d entity_match=%d origin=%d hub=%s readable=%d",
+        boundary, sample, owner, raw, entity, owner && owner == raw, owner && owner == entity, origin, hubKind, readable);
+}
+
 static void EnsureHangarHub() {
     __try {
         if (SwapHubSlot(&InstanceRequestHub, &g_realHub)) Log("[hangar] installed scoped offline hangar lookup adapter");
@@ -179,8 +203,11 @@ static void EnsureHangarHub() {
 }
 
 static uintptr_t __fastcall RequestInstanceHook(uintptr_t manager, uint64_t owner, uintptr_t request) {
+    static volatile LONG samples = 0;
+    const LONG sample = InterlockedIncrement(&samples);
     Log("[hangar] native instance request entered; awaiting native creation result");
     EnsureHangarHub();
+    TraceHangarEntry("instance", sample, owner, request);
     __try {
         const uintptr_t service = g_service ? *g_service : 0;
         const bool offline = service && g_realHub && !g_realHub(service);
@@ -200,15 +227,20 @@ static uintptr_t __fastcall RequestInstanceHook(uintptr_t manager, uint64_t owne
     uintptr_t result = 0;
     __try { result = g_requestInstanceOrig(manager, owner, request); }
     __finally { --t_inInstanceRequest; }
+    if (sample <= 20) Log("[hangar-diag] instance #%ld returned; not async completion", sample);
     return result;
 }
 
 static uintptr_t __fastcall RequestListHook(uintptr_t manager, uintptr_t out, uint64_t owner) {
+    static volatile LONG samples = 0;
+    const LONG sample = InterlockedIncrement(&samples);
     EnsureHangarHub();
+    TraceHangarEntry("list", sample, owner, 0);
     ++t_inInstanceRequest;
     uintptr_t result = 0;
     __try { result = g_requestListOrig(manager, out, owner); }
     __finally { --t_inInstanceRequest; }
+    if (sample <= 20) Log("[hangar-diag] list #%ld returned; not async completion", sample);
     Log("[hangar] native destination-list request returned; destination/instance readiness is not yet confirmed");
     return result;
 }
@@ -236,28 +268,57 @@ static uint8_t* FindLeaAny(const Section& text, const uint8_t* target) {
 void ResolveHangarsApi(const Section& text, const Section& rdata) {
     uint8_t* fn = FunctionOf(FindLeaAny(text, FindCString(rdata, "IIM_RequestInstanceImpl_Requesting")));
     int count = 0;
-    uint8_t* list = FindUniquePattern(text,
-        "4C 89 44 24 18 48 89 54 24 10 48 89 4C 24 08 55 53 56 57 41 54 41 55 41 56 41 57 48 8D AC 24 78 FF FF FF 48 81 EC 88 01 00 00", count);
     // Both paths must bind the same typed future; reject changed ABI layouts.
     uint8_t* bind = fn && BytesMatch(fn + 0x414, "E8") ? fn + 0x419 + Rel32(fn + 0x415) : nullptr;
+    uint8_t* list = hangarlookup::Find(text.base, text.size, bind, count);
     uint8_t* ctor = fn && BytesMatch(fn + 0x404, "E8") ? fn + 0x409 + Rel32(fn + 0x405) : nullptr;
     uint8_t* thunk = ctor && BytesMatch(ctor + 0xAB, "48 8D 05") ? ctor + 0xB2 + Rel32(ctor + 0xAE) : nullptr;
     uint8_t* continuation = thunk && BytesMatch(thunk + 0x1C, "E8") ? thunk + 0x21 + Rel32(thunk + 0x1D) : nullptr;
-    if (!FindServicesObject(text) || !fn || !list || !bind || !continuation
-        || !BytesMatch(fn, "48 89 5C 24 10 48 89 4C 24 08 55 56 57")
-        || !BytesMatch(fn + 0x3C, "41 8B 58 08")
-        || !BytesMatch(list + 0x5E8, "FF 50 10") || !BytesMatch(list + 0x66A, "E8")
-        || list + 0x66F + Rel32(list + 0x66B) != bind
-        || !BytesMatch(bind + 0x89, "44 38 60 29")
-        || !BytesMatch(bind + 0x97, "44 38 60 28")
-        || !BytesMatch(bind + 0xA3, "48 81 C7 C8 00 00 00")
-        || !BytesMatch(bind + 0xB0, "38 47 50")
-        || !BytesMatch(continuation + 0x2F93, "41 83 7C 24 08 04 0F 84 ?? ?? ?? ?? 4D 8B 6C 24 50 4D 85 ED")) {
-        Log("[!] hangar lookup ABI not recognized; offline hangar adapter disabled");
+    int rawCandidates = 0;
+    for (size_t i = 0; i + sizeof(hangarlookup::Prologue) <= text.size; ++i)
+        if (!memcmp(text.base + i, hangarlookup::Prologue, sizeof(hangarlookup::Prologue))) ++rawCandidates;
+    Log("[hangar-diag] resolve raw_list_candidates=%d qualified_list_candidates=%d", rawCandidates, count);
+    Log("[hangar-diag] resolve request=%d binder=%d constructor=%d thunk=%d continuation=%d",
+        fn != nullptr, bind != nullptr, ctor != nullptr, thunk != nullptr, continuation != nullptr);
+    bool compatible = true;
+    const auto check = [&compatible](const char* name, bool ok) {
+        if (!ok) { compatible = false; Log("[hangar-diag] compatibility FAIL %s", name); }
+    };
+    check("services-object", FindServicesObject(text) != nullptr);
+    check("request-function", fn != nullptr);
+    check("list-function", list != nullptr);
+    check("typed-binder", bind != nullptr);
+    check("creation-continuation", continuation != nullptr);
+    // Null dependencies fail their own predicate; do not dereference them.
+    if (fn) {
+        check("request-prologue", BytesMatch(fn, "48 89 5C 24 10 48 89 4C 24 08 55 56 57"));
+        check("request-origin-load", BytesMatch(fn + 0x3C, "41 8B 58 08"));
+    }
+    if (list) {
+        check("list-service-call", BytesMatch(list + 0x5E8, "FF 50 10"));
+        const bool call = BytesMatch(list + 0x66A, "E8");
+        check("list-binder-call", call);
+        check("list-binder-target", call && bind && list + 0x66F + Rel32(list + 0x66B) == bind);
+    }
+    if (bind) {
+        check("binder-abandoned-flag", BytesMatch(bind + 0x89, "44 38 60 29"));
+        check("binder-ready-flag", BytesMatch(bind + 0x97, "44 38 60 28"));
+        check("binder-result-offset", BytesMatch(bind + 0xA3, "48 81 C7 C8 00 00 00"));
+        check("binder-result-tag", BytesMatch(bind + 0xB0, "38 47 50"));
+    }
+    if (continuation) check("continuation-elevator-branch", BytesMatch(continuation + 0x2F93,
+        "41 83 7C 24 08 04 0F 84 ?? ?? ?? ?? 4D 8B 6C 24 50 4D 85 ED"));
+    if (!compatible) {
+        Log("[hangar-diag] hooks instance=not-attempted list=not-attempted reason=compatibility");
+        Log("[!] hangar lookup ABI not recognized; adapter disabled (request=%d binder=%d qualified_lists=%d continuation=%d)",
+            fn != nullptr, bind != nullptr, count, continuation != nullptr);
         return;
     }
-    if (!HookFunction(fn, 10, reinterpret_cast<void*>(&RequestInstanceHook), reinterpret_cast<void**>(&g_requestInstanceOrig)))
-        Log("[!] hangar instance request hook failed");
-    if (!HookFunction(list, 10, reinterpret_cast<void*>(&RequestListHook), reinterpret_cast<void**>(&g_requestListOrig)))
-        Log("[!] hangar destination-list hook failed");
+    const bool instanceInstalled = HookFunction(fn, 10, reinterpret_cast<void*>(&RequestInstanceHook), reinterpret_cast<void**>(&g_requestInstanceOrig));
+    if (!instanceInstalled) Log("[!] hangar instance request hook failed");
+    else Log("[hangar] native instance request hook installed");
+    const bool listInstalled = HookFunction(list, 10, reinterpret_cast<void*>(&RequestListHook), reinterpret_cast<void**>(&g_requestListOrig));
+    if (!listInstalled) Log("[!] hangar destination-list hook failed");
+    else Log("[hangar] native destination-list hook installed (qualified matches=%d)", count);
+    Log("[hangar-diag] hooks instance=%s list=%s", instanceInstalled ? "installed" : "failed", listInstalled ? "installed" : "failed");
 }
