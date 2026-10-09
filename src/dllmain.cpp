@@ -119,6 +119,7 @@ static void StartOffline() {
     if (!sco::game::RegisterGameSignatures()) Log("[!] sco-core's game signature tables did not all register");
     sco::ResolveAll(sco::ModuleImage());
     g_signaturesResolved = true;
+    EnableQuantumDrive();   // the pak.* rows: the new quantum drive's game data, served as it loads
     InstallQuitHook();
     if (ResolveTeleportApi()) {
         ResolveSpawnApi(g_text, g_rdata);
@@ -377,7 +378,10 @@ static DWORD WINAPI ModThread(LPVOID param) {
 }
 
 // sco-core's lines ([core], [plugin], [app], [status]) go to mod.log and the console like ours.
-static void ForwardCoreLog(const char* line) { Log("%s", line); }
+static void ForwardCoreLog(const char* line) {
+    Log("%s", line);
+    QuantumOnCoreLog(line);
+}
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
