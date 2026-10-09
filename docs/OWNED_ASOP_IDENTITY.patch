@@ -1,0 +1,47 @@
+--- a/src/hooks.cpp
++++ b/src/hooks.cpp
+@@ -785,12 +785,14 @@
+             if (!strcmp(current[j].state, "stored")) selected = j;
+     if (selected < 0) { Log("[delivery] blocked: ship unavailable or server fleet missing; refresh the bridge"); return; }
+     uint64_t atc = 0, player = 0;
+-    __try { atc = Rd<uint64_t>(asop + kAsopAtcId); player = LocalPlayerId(); }
++    // Native takeoff consumes an entity ID, not the raw client-context value.
++    __try { atc = Rd<uint64_t>(asop + kAsopAtcId); player = LocalPlayerEntityId(); }
+     __except (EXCEPTION_EXECUTE_HANDLER) {}
+     if (sample <= 20) {
+-        const uint64_t entity = LocalPlayerEntityId();
+-        Log("[asop-diag] queue #%ld ship=%s terminal_atc=%llu passed_player=%llu entity_player=%llu equal=%d resolver=%d takeoff=%d",
+-            sample, current[selected].id, atc, player, entity, player && player == entity,
++        uint64_t raw = 0;
++        __try { raw = LocalPlayerId(); } __except (EXCEPTION_EXECUTE_HANDLER) {}
++        Log("[asop-diag] queue #%ld ship=%s terminal_atc=%llu passed_player=%llu raw_player=%llu identity=entity resolver=%d takeoff=%d",
++            sample, current[selected].id, atc, player, raw,
+             g_getATCComp != nullptr, g_requestTakingOff != nullptr);
+     }
+     if (!g_getATCComp || !g_requestTakingOff || !atc || !player) {
+@@ -837,18 +839,19 @@
+     char cls[201] = {};
+     uint64_t atc = 0, player = 0, currentPlayer = 0;
+     if (!Bridge_TakeAtc(cls, sizeof(cls), atc, player)) return;
+-    __try { currentPlayer = LocalPlayerId(); } __except (EXCEPTION_EXECUTE_HANDLER) {}
++    currentPlayer = LocalPlayerEntityId(); // Same representation as the queued player.
+     static volatile LONG samples = 0;
+     const LONG sample = InterlockedIncrement(&samples);
+     if (sample <= 20) {
+         char operation[33] = {};
+         Bridge_DiagnosticOperation(operation, sizeof(operation));
+-        const uint64_t entity = LocalPlayerEntityId();
+-        Log("[asop-diag] dispatch #%ld op=%s terminal_atc=%llu passed_player=%llu current_raw_player=%llu entity_player=%llu equal=%d",
+-            sample, operation, atc, player, currentPlayer, entity, player && player == entity);
++        uint64_t raw = 0;
++        __try { raw = LocalPlayerId(); } __except (EXCEPTION_EXECUTE_HANDLER) {}
++        Log("[asop-diag] dispatch #%ld op=%s terminal_atc=%llu passed_player=%llu current_entity_player=%llu raw_player=%llu identity=entity equal=%d",
++            sample, operation, atc, player, currentPlayer, raw, player && player == currentPlayer);
+     }
+-    if (!currentPlayer || currentPlayer != player)
+-        Log("[delivery] ATC dispatch blocked: player changed while reservation was pending");
++    if (!player || !currentPlayer || currentPlayer != player)
++        Log("[delivery] ATC dispatch blocked: player changed or unavailable while reservation was pending");
+     else if (const char* err = RequestShipFromAtc(atc, player, cls))
+         Log("[delivery] reserved ATC request failed or uncertain: %s", err);
+     else Log("[delivery] %s: native ATC request issued; hangar and ship placement UNCONFIRMED", cls);
