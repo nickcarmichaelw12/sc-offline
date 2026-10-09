@@ -164,6 +164,7 @@ static void SetFeatureCaps() {
     SetCap("crew", Menu_SeatControlAvailable());
     SetCap("npc", SpawnerReady());
     SetCap("outfits", g_outfitsOk);
+    SetCap("loadout", g_outfitsOk);   // the gear menu's loader, which outfits ride
     SetCap("quantum.drive", QuantumDriveReady());
     SetCap("quantum.boost", QuantumBoostReady());
 }
@@ -268,7 +269,7 @@ static void RunFeatureTicks(DWORD now) {
     // fallback for a built-in that didn't load.
     if (!SpawnBuiltinOwnsTick()) ProcessShipMenu(now);
     if (!CrewBuiltinOwnsTick()) ProcessCrew(now);
-    ProcessLoadout();
+    if (!LoadoutBuiltinOwnsTick()) { ProcessLoadout(); ProcessOutfits(); }
     if (!NpcBuiltinOwnsTick()) ProcessNpcs();
     ProcessBuild();
     ProcessCVars();
@@ -276,7 +277,6 @@ static void RunFeatureTicks(DWORD now) {
     ProcessMissions();
     ProcessContracts();
     ProcessAmmo();
-    ProcessOutfits();
     TeleportTick(now);
     ProcessTravel(now);
 }

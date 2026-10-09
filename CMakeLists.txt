@@ -116,6 +116,7 @@ add_library(dinput8 SHARED
   src/builtins/spawn_plugin.cpp
   src/builtins/crew_plugin.cpp
   src/builtins/npc_plugin.cpp
+  src/builtins/loadout_plugin.cpp
   # Manifest EnableSegmentHeap.
   src/dinput8.manifest
 )
