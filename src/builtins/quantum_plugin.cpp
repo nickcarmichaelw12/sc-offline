@@ -9,6 +9,7 @@
 // storage (data/storage/quantum.db, travel.cpp), opened here.
 #include "builtins.h"
 #include "builtin_store.h"
+#include "tabs.h"
 #include "../quantum.h"
 #include "../teleport.h"
 #include "../travel.h"
@@ -122,6 +123,8 @@ sco_result QuantumLoad(const sco_api* api, sco_plugin* self) {
     if (r == SCO_OK) r = api->subscribe(self, "tick", OnTick, nullptr);
     if (r != SCO_OK) return r;   // the host releases what was registered
     g_quantumStore.Open(api, self);   // before the first tick, which loads the saved spots
+    // Its page of the menu (and keys), through sco.ui; the menu shell draws it (tabs.h).
+    RegisterBuiltinTab(api, self, "quantum.travel", "Travel", kTabTravel, DrawTravelTab);
     g_ticking = true;
     return SCO_OK;
 }

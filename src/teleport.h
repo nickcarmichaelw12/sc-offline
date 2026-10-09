@@ -50,17 +50,12 @@ uintptr_t   SystemZoneOf(uintptr_t zone);
 void        CurrentSystemZoneName(char* out, size_t n);           // "SolarSystem_<id>" you're in, or ""                         // the SolarSystem_* zone above a zone, or 0
 
 // F7 and F8: save where you're standing (the teleport built-in's storage, else spawn.txt) / go to
-// the saved spot. The teleport built-in's
-// commands teleport.save and teleport.go run these (src/builtins/teleport_plugin.cpp). `why` names
-// the caller in mod.log ("F7", "teleport.go"); reply gets a short message either way. False when it
-// didn't happen. Game thread.
+// the saved spot. The teleport built-in's commands teleport.save and teleport.go run these
+// (src/builtins/teleport_plugin.cpp), and the built-in binds F7 and F8 to them through sco.ui.
+// `why` names the caller in mod.log ("F7", "teleport.go"); reply gets a short message either way.
+// False when it didn't happen. Game thread.
 bool SaveSpotHere(const char* why, char* reply, size_t n);
 bool GoToSavedSpot(const char* why, char* reply, size_t n);
-
-// The F7 / F8 hotkeys: invoke teleport.save / teleport.go through sco_api, the same path a plugin
-// takes (src/builtins/teleport_plugin.cpp). Game thread.
-void TeleportSaveHotkey();
-void TeleportGoHotkey();
 
 // Before the host kit starts: the first TeleportTick loads the spot (storage, importing spawn.txt
 // once; spawn.txt without storage).

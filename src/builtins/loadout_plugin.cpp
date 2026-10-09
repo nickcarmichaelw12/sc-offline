@@ -6,6 +6,7 @@
 // items.txt and outfits.txt once you're in the universe and equip on the game thread. The
 // mechanics stay in loadout.cpp and outfits.cpp.
 #include "builtins.h"
+#include "tabs.h"
 #include "../loadout.h"
 #include "../menu.h"
 #include "../outfits.h"
@@ -105,6 +106,9 @@ sco_result LoadoutLoad(const sco_api* api, sco_plugin* self) {
         "Wears a Squadron 42 outfit, as the Squadron 42 tab does", Wear, outfit, 1);
     if (r == SCO_OK) r = api->subscribe(self, "tick", OnTick, nullptr);
     if (r != SCO_OK) return r;   // the host releases what was registered
+    // Its page of the menu (and keys), through sco.ui; the menu shell draws it (tabs.h).
+    RegisterBuiltinTab(api, self, "loadout.player", "Player", kTabPlayer, DrawPlayerTab);
+    RegisterBuiltinTab(api, self, "loadout.sq42", "Squadron 42", kTabSq42, DrawSq42Tab);
     g_ticking = true;
     return SCO_OK;
 }

@@ -110,6 +110,7 @@ add_library(dinput8 SHARED
   src/services.cpp
   src/outfits.cpp
   src/menu.cpp
+  src/hotkeys.cpp
   src/travel.cpp
   # Built-in plugins (src/builtins/builtins.h).
   src/builtins/teleport_plugin.cpp
@@ -121,6 +122,13 @@ add_library(dinput8 SHARED
   src/builtins/quantum_plugin.cpp
   src/builtins/build_plugin.cpp
   src/builtins/contracts_plugin.cpp
+  # Their menu tabs, drawn through sco.ui (src/builtins/tabs.h).
+  src/builtins/loadout_ui.cpp
+  src/builtins/quantum_ui.cpp
+  src/builtins/spawn_ui.cpp
+  src/builtins/crew_ui.cpp
+  src/builtins/npc_ui.cpp
+  src/builtins/build_ui.cpp
   # Manifest EnableSegmentHeap.
   src/dinput8.manifest
 )
@@ -175,3 +183,19 @@ set_target_properties(builtins_probe PROPERTIES
   LIBRARY_OUTPUT_DIRECTORY "${_bprobe_dir}/$<0:>"
   ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib/test-plugins")
 configure_file(tools/test-plugins/builtins_probe/plugin.ini "${_bprobe_dir}/plugin.ini" COPYONLY)
+
+# ui_probe exercises the menu shell and hotkeys through sco.ui: its own tab, badge and overlay, drawn
+# with ImGui the way a third-party plugin does it (src/menu_imgui.h: sc-offline's own ImGui, linked
+# in), and Ctrl+Alt+9 / Ctrl+Alt+0 bound to its commands; same layout as spawn_probe.
+add_library(ui_probe SHARED tools/test-plugins/ui_probe/ui_probe.cpp)
+target_include_directories(ui_probe PRIVATE external/sco-core/include src)
+target_compile_definitions(ui_probe PRIVATE ${SCO_COMMON_DEFINES})
+target_compile_options(ui_probe PRIVATE ${SCO_COMMON_OPTIONS} /W3)
+target_link_libraries(ui_probe PRIVATE imgui)
+set_target_properties(ui_probe PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+set(_uprobe_dir "${CMAKE_BINARY_DIR}/test-plugins/ui_probe")
+set_target_properties(ui_probe PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${_uprobe_dir}/$<0:>"
+  LIBRARY_OUTPUT_DIRECTORY "${_uprobe_dir}/$<0:>"
+  ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib/test-plugins")
+configure_file(tools/test-plugins/ui_probe/plugin.ini "${_uprobe_dir}/plugin.ini" COPYONLY)

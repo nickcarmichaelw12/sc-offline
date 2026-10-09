@@ -6,6 +6,7 @@
 // the status strip as before. The ship the commands work on is the panel's target ship: the one
 // you spawned last, or the one crew.target picked. The mechanics stay in spawner.cpp.
 #include "builtins.h"
+#include "tabs.h"
 #include "../menu.h"
 #include "../spawner.h"
 #include "../teleport.h"
@@ -150,6 +151,8 @@ sco_result CrewLoad(const sco_api* api, sco_plugin* self) {
         "Sends the game's Flight Ready event to the target ship", PowerOn);
     if (r == SCO_OK) r = api->subscribe(self, "tick", OnTick, nullptr);
     if (r != SCO_OK) return r;   // the host releases what was registered
+    // Its page of the menu (and keys), through sco.ui; the menu shell draws it (tabs.h).
+    RegisterBuiltinTab(api, self, "crew.crew", "Crew", kTabCrew, DrawCrewTab);
     g_ticking = true;
     return SCO_OK;
 }

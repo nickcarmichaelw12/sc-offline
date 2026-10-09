@@ -71,3 +71,8 @@ void            Menu_RequestWearOutfit(int index);
 void            Menu_SetS42VisorHud(bool on);
 
 void Menu_Start(HWND gameWindow);
+// Game thread, on every pass of the message hook: builds the menu's ImGui frame when the menu
+// thread has asked for one (menu.cpp: sco.ui draws run on the game thread only).
+void Menu_GameThreadFrame();
+// The menu has focus and one of its text boxes is taking keys: hotkeys stay quiet.
+bool Menu_Typing();
