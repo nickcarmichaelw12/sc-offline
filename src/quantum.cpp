@@ -16,7 +16,6 @@
 static sco::vfs::MountTable g_dcbMounts;
 static bool                 g_pakEnabled = false;
 static const char*          g_notHooked = "see [pak] above";
-static std::atomic<int64_t> g_loadStart{ 0 };   // QueryPerformanceCounter at the .dcb's open
 static std::atomic<int>     g_dataPatched{ -1 };  // -1 no load yet, 0 loaded without the drive, 1 patched
 
 static std::shared_ptr<const sco::vfs::Table> BuildDriveMount() {
@@ -39,12 +38,46 @@ static std::shared_ptr<const sco::vfs::Table> BuildDriveMount() {
     return sco::vfs::Table::Build(std::move(mounts));
 }
 
-// sco::game::pak reads the mounts once, at the loader's open of the .dcb: the load's start.
-static std::shared_ptr<const sco::vfs::Table> DriveMounts() {
-    LARGE_INTEGER t;
-    QueryPerformanceCounter(&t);
-    g_loadStart.store(t.QuadPart, std::memory_order_relaxed);
-    return g_dcbMounts.Current();
+static std::shared_ptr<const sco::vfs::Table> DriveMounts() { return g_dcbMounts.Current(); }
+
+// After each DataCore load: sco::game::pak's report, in the feature's words. sco-core calls it on
+// the loader's thread after releasing its lock, so reading the mount table here is fine.
+static void ReportDataLoad(const sco::game::pak::LoadReport& r) {
+    const char* ok = r.loaderOk ? "ok" : "FAILED";
+    const unsigned long long ms = static_cast<unsigned long long>(r.durationMs);
+    const bool patched = r.outcome == sco::game::pak::Outcome::Applied;
+    switch (r.outcome) {
+    case sco::game::pak::Outcome::Applied:
+        Log("[+] new quantum drive: game data patched as it loaded (%d edits, %llu -> %llu bytes; the Gladius gets the new drive), load %s in %llu ms",
+            static_cast<int>(_countof(dcbpatch::kEdits)), static_cast<unsigned long long>(r.baseSize),
+            static_cast<unsigned long long>(r.size), ok, ms);
+        break;
+    case sco::game::pak::Outcome::Passed: {
+        const std::shared_ptr<const sco::vfs::Table> table = g_dcbMounts.Current();
+        const std::vector<sco::vfs::MountInfo> info = table ? table->Mounts() : std::vector<sco::vfs::MountInfo>();
+        if (!info.empty() && info[0].state == sco::vfs::MountState::Inert)
+            Log("[!] new quantum drive: Game2.dcb isn't the 4.10.0 one the patch was made for (game updated?: %s); loaded %s in %llu ms without the new drive",
+                info[0].reason.c_str(), ok, ms);
+        else
+            Log("[!] new quantum drive: %s passed through (%s); game data loaded %s in %llu ms without the new drive",
+                r.path.c_str(), r.reason.c_str(), ok, ms);
+        break;
+    }
+    case sco::game::pak::Outcome::NoDcb:
+        Log("[!] new quantum drive: the loader opened no .dcb; game data loaded %s without the new drive", ok);
+        break;
+    case sco::game::pak::Outcome::NoCryPak:
+        Log("[!] new quantum drive: CryPak not found; game data loaded %s without the new drive", ok);
+        break;
+    case sco::game::pak::Outcome::SwapFailed:
+        Log("[!] new quantum drive: %s; game data loaded %s without the new drive", r.reason.c_str(), ok);
+        break;
+    case sco::game::pak::Outcome::None:
+        return;
+    }
+    g_dataPatched.store(patched ? 1 : 0, std::memory_order_release);
+    const sco::Result cr = sco::caps::Set("quantum.drive", patched, patched ? nullptr : "the game data wasn't patched (see mod.log)");
+    if (cr != sco::Result::Ok) Log("[!] capability quantum.drive: %s", sco::ResultName(cr));
 }
 
 void EnableQuantumDrive() {
@@ -58,71 +91,8 @@ void EnableQuantumDrive() {
     g_dcbMounts.Publish(std::move(table));
     sco::game::pak::Options o;
     o.mounts = DriveMounts;
+    o.onLoad = ReportDataLoad;
     g_pakEnabled = sco::game::pak::Enable(o) == sco::Result::Ok;
-}
-
-// After the load: what sco::game::pak::LastLoad reports, in the feature's words. Runs on its own
-// thread because the adapter logs its load line while holding the lock LastLoad takes.
-static DWORD WINAPI ReportDataLoad(LPVOID param) {
-    const long long ms = reinterpret_cast<intptr_t>(param);
-    const sco::game::pak::LoadReport r = sco::game::pak::LastLoad();
-    const char* ok = r.loaderOk ? "ok" : "FAILED";
-    char took[32] = "";
-    if (ms >= 0) snprintf(took, sizeof(took), " in %lld ms", ms);
-    const bool patched = r.outcome == sco::game::pak::Outcome::Applied;
-    switch (r.outcome) {
-    case sco::game::pak::Outcome::Applied:
-        Log("[+] new quantum drive: game data patched as it loaded (%d edits, %llu -> %llu bytes; the Gladius gets the new drive), load %s%s",
-            static_cast<int>(_countof(dcbpatch::kEdits)), static_cast<unsigned long long>(r.baseSize),
-            static_cast<unsigned long long>(r.size), ok, took);
-        break;
-    case sco::game::pak::Outcome::Passed: {
-        const std::shared_ptr<const sco::vfs::Table> table = g_dcbMounts.Current();
-        const std::vector<sco::vfs::MountInfo> info = table ? table->Mounts() : std::vector<sco::vfs::MountInfo>();
-        if (!info.empty() && info[0].state == sco::vfs::MountState::Inert)
-            Log("[!] new quantum drive: Game2.dcb isn't the 4.10.0 one the patch was made for (game updated?: %s); loaded %s%s without the new drive",
-                info[0].reason.c_str(), ok, took);
-        else
-            Log("[!] new quantum drive: %s passed through (%s); game data loaded %s%s without the new drive",
-                r.path.c_str(), r.reason.c_str(), ok, took);
-        break;
-    }
-    case sco::game::pak::Outcome::NoDcb:
-        Log("[!] new quantum drive: the loader opened no .dcb; game data loaded %s without the new drive", ok);
-        break;
-    case sco::game::pak::Outcome::NoCryPak:
-        Log("[!] new quantum drive: CryPak not found; game data loaded %s without the new drive", ok);
-        break;
-    case sco::game::pak::Outcome::SwapFailed:
-        Log("[!] new quantum drive: %s; game data loaded %s without the new drive", r.reason.c_str(), ok);
-        break;
-    case sco::game::pak::Outcome::None:
-        return 0;
-    }
-    g_dataPatched.store(patched ? 1 : 0, std::memory_order_release);
-    const sco::Result cr = sco::caps::Set("quantum.drive", patched, patched ? nullptr : "the game data wasn't patched (see mod.log)");
-    if (cr != sco::Result::Ok) Log("[!] capability quantum.drive: %s", sco::ResultName(cr));
-    return 0;
-}
-
-static bool EndsWith(const char* s, size_t n, const char* tail) {
-    const size_t k = strlen(tail);
-    return n >= k && !memcmp(s + n - k, tail, k);
-}
-
-// sco::game::pak logs one line when the loader returns ("[pak] ... load ok", "... load FAILED", or
-// "[!] [pak] ...; game data loaded ok unchanged"): that line is the load's end.
-void QuantumOnCoreLog(const char* line) {
-    if (!g_pakEnabled || !line || !strstr(line, "[pak] ")) return;
-    const size_t n = strlen(line);
-    if (!EndsWith(line, n, ", load ok") && !EndsWith(line, n, ", load FAILED") && !EndsWith(line, n, " unchanged")) return;
-    LARGE_INTEGER now, freq;
-    QueryPerformanceCounter(&now);
-    QueryPerformanceFrequency(&freq);
-    const int64_t start = g_loadStart.exchange(0, std::memory_order_relaxed);
-    const intptr_t ms = start ? static_cast<intptr_t>((now.QuadPart - start) * 1000 / freq.QuadPart) : -1;
-    if (HANDLE t = CreateThread(nullptr, 0, ReportDataLoad, reinterpret_cast<LPVOID>(ms), 0, nullptr)) CloseHandle(t);
-    else Log("[!] new quantum drive: couldn't report the game data load (CreateThread %lu)", GetLastError());
 }
 
 using OnActionFn = uintptr_t(__fastcall*)(uintptr_t handler, int action, int mode, float value, void* functor);
