@@ -288,6 +288,8 @@ static void RunFeatureTicks(DWORD now) {
 static void OnMainThreadTick() {
     static bool hostKitStarted = false;
     if (!hostKitStarted) { hostKitStarted = true; StartHostKit(); }
+    // Every pass, not throttled: the menu's frame (its tabs are plugin draws, game thread only).
+    Menu_GameThreadFrame();
 
     static DWORD last = 0;
     const DWORD now = GetTickCount();
