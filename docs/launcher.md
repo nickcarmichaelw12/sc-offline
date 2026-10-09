@@ -136,6 +136,7 @@ An update:
    file against the manifest again before using it;
 4. replaces every listed file except `sc-offline.ini` and the player files in `data\` (`wallet.txt`,
    `spawn.txt`, `bookmarks.txt`, `locations_found.txt`, `game-path.txt`, `game-build.txt`, the logs).
+   `data\storage\` (your saves) is never in a release, so an update doesn't touch it.
    Each file is written as `<name>.update-new`, flushed to disk, the old one renamed to `<name>.update-old`,
    and the new one moved into place and checked again. Each step is written to `data\update\applied.txt`
    before it happens. A file that antivirus is scanning is retried for a few seconds;
@@ -238,7 +239,7 @@ Keep `Game.log` if you want to report a bug. Set `clean_logs = off` in `sc-offli
 
 Each line is `key = value`. Lines starting with `#` are comments. An unknown key is reported when the launcher starts, not silently ignored.
 
-There is no wallet setting: your aUEC balance is kept in `data\wallet.txt` (see [Features](features.md#player)).
+There is no wallet setting: your aUEC balance is kept in `data\storage\contracts.db` and `data\wallet.txt`, which you can edit (see [Features](features.md#player)).
 
 | Key | Default | Meaning |
 | --- | --- | --- |

@@ -8,13 +8,13 @@ Most of the lists below are plain text files in `data/`, and the counts are take
 
 - Noclip, god mode, infinite ammo.
 - Gear menu: equip any of 1489 items, sorted into ten slots (`items.txt`).
-- Wallet: your aUEC balance is loaded from `data/wallet.txt` when you spawn and saved back as it changes. The file holds just the number; edit it while the game is closed to change your balance. Without the file, you start with the `aUEC amount` in `data/OfflineDB/default_1.xml` (100,000,000). Once `wallet.txt` exists, that amount is no longer used, so delete `wallet.txt` to go back to it.
+- Wallet: your aUEC balance is loaded when you spawn and saved as it changes, in the contracts built-in's storage (`data/storage/contracts.db`) and in `data/wallet.txt`. The file holds just the number; edit it while the game is closed to change your balance: an edited `wallet.txt` always wins over the stored balance (see [Saves](data-files.md#saves)). Without the file, you start with the `aUEC amount` in `data/OfflineDB/default_1.xml` (100,000,000). Once `wallet.txt` exists, that amount is no longer used, so delete `wallet.txt` to go back to it.
 
 ## Travel
 
 - Teleport to planets, moons, stations, Lagrange points and jump points, grouped by star system (`locations.txt`).
 - **Scan** lists everything the game has loaded and writes it to `locations_found.txt`. Interiors and small zones are hidden unless you ask to see them.
-- Save named spots of your own (`bookmarks.txt`). **F7** saves one quick position and **F8** takes you back to it (`spawn.txt`). F7 and F8 run the built-in teleport plugin's commands; see [Plugins](#plugins).
+- Save named spots of your own (`data/storage/quantum.db`). **F7** saves one quick position and **F8** takes you back to it (`data/storage/teleport.db`). F7 and F8 run the built-in teleport plugin's commands; see [Plugins](#plugins). Spots saved in `bookmarks.txt` and `spawn.txt` by an older version are imported the first time you start this one ([Saves](data-files.md#saves)).
 - A teleport won't take you into another star system. Pyro and Nyx can only be reached with the default `boot_map = PU_All`.
 - Some Pyro places drop you in orbit, because `locations.txt` doesn't have their radius yet.
 
@@ -93,7 +93,7 @@ sc-offline's features are nine plugins compiled into `dinput8.dll`: `teleport`, 
 
 | Command | Does | Key |
 | --- | --- | --- |
-| `teleport.save` | Saves where you're standing to `spawn.txt`; the reply names the spot | **F7** |
+| `teleport.save` | Saves where you're standing (`data/storage/teleport.db`); the reply names the spot | **F7** |
 | `teleport.go` | Teleports to the saved spot; the reply says where you went, or why not | **F8** |
 | `spawn.ship <class> <height>` | Spawns a ship `<height>` m (0 to 10000) above you, as the Vehicles tab does, and makes it the Crew & seats target; the status strip says when it's there. An unknown class answers `failed` | |
 | `crew.target` | Makes the ship you're in the Crew & seats target | |
@@ -110,7 +110,7 @@ sc-offline's features are nine plugins compiled into `dinput8.dll`: `teleport`, 
 | `ammo.ship_infinite <on>` | Infinite ship ammo on or off | |
 | `quantum.travel <place> <altitude>` | Teleports you to a place from the Travel tab, `<altitude>` m (100 to 20000) above the ground | |
 | `quantum.bookmark <name>` | Teleports you to a saved spot | |
-| `quantum.save_bookmark <name>` | Saves where you are as a named spot (`bookmarks.txt`); an empty name uses the zone's | |
+| `quantum.save_bookmark <name>` | Saves where you are as a named spot (`data/storage/quantum.db`); an empty name uses the zone's | |
 | `quantum.scan` | Scans everything the game has loaded into `locations_found.txt` | |
 | `build.toggle` | Build mode on or off | **F6** |
 | `build.undo` | Removes the last object you placed | **Backspace** in build mode |

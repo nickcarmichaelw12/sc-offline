@@ -13,6 +13,7 @@
 // they can't clash with sco_api.h's sco_plugin_* declarations and the DLL still exports only
 // DirectInput8Create.
 #include "builtins.h"
+#include "builtin_store.h"
 #include "spatial_service.h"
 #include "../build.h"
 #include "../teleport.h"
@@ -251,16 +252,18 @@ const sco_plugin_info* TeleportQuery() { return &kInfo; }
 sco_result TeleportLoad(const sco_api* api, sco_plugin* self) {
     g_api = api;
     g_self = self;
-    sco_result r = Register("teleport.save", "Save spot", "Save where you're standing (F7), in spawn.txt", Save);
+    g_teleportStore.Open(api, self);   // data/storage/teleport.db: the saved spot (teleport.cpp)
+    sco_result r = Register("teleport.save", "Save spot", "Save where you're standing (F7)", Save);
     if (r == SCO_OK) r = Register("teleport.go", "Go to saved spot", "Teleport to the saved spot (F8)", Go);
     if (r == SCO_OK) r = api->provide_service(self, SC_SPATIAL_SERVICE_NAME, SC_SPATIAL_SERVICE_VERSION, &kSpatial);
     if (r == SCO_OK) r = api->subscribe(self, "tick", OnTick, nullptr);
-    if (r != SCO_OK) { g_api = nullptr; g_self = nullptr; }   // the host releases what was registered
+    if (r != SCO_OK) { g_api = nullptr; g_self = nullptr; g_teleportStore.Close(); }   // the host releases what was registered
     return r;
 }
 
 void TeleportUnload() {
     g_zones.Clear();
+    g_teleportStore.Close();
     g_api = nullptr;
     g_self = nullptr;
 }

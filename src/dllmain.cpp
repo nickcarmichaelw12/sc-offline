@@ -186,8 +186,10 @@ static void StartHostKit() {
         std::error_code ec;
         pf.pluginRoot = std::filesystem::absolute(dir, ec);
         if (ec) pf.pluginRoot = dir;
+        // sco.storage: every plugin's database, the built-ins' included, in data\storage\<id>.db.
+        pf.dataRoot = pf.pluginRoot.parent_path();
     } else {
-        Log("[app] SC_OFFLINE_SHIPS_FILE is unset, so there is no data folder to load plugins from");
+        Log("[app] SC_OFFLINE_SHIPS_FILE is unset, so there is no data folder to load plugins from or keep storage in");
     }
     pf.pluginsEnabled = PluginsEnabled();
     pf.scripts = &kLua;

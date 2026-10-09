@@ -1,5 +1,6 @@
 #pragma once
 #include "common.h"
+#include <string>
 
 struct TeleportApi {
     bool       ok = false;
@@ -36,6 +37,11 @@ struct ZoneSpot { char name[96]; double local[3]; };
 struct Spot { int n = 0; ZoneSpot z[kMaxZoneDepth] = {}; };
 
 const char* CaptureCurrentSpot(Spot& s);                          // where you're standing now
+// A spot as spawn.txt's and bookmarks.txt's "spot x y z zone" lines, innermost first: the text
+// both keep in storage too. SpotFromText returns how many zones it read (out of range positions
+// skipped with checkPosition, as spawn.txt always did).
+void        SpotToText(const Spot& s, std::string& out);
+int         SpotFromText(const char* text, Spot& s, bool checkPosition);
 const char* GoToSpot(const Spot& s, DWORD now, const char* why);   // teleport, then refine as zones stream in
 const char* TeleportIntoZone(uintptr_t zone, const double local[3]);
 void        SpotSystemName(const Spot& s, char* out, size_t n);   // "Stanton", from the OOC_<system>_ zone names
@@ -43,7 +49,8 @@ void        CurrentSystemName(char* out, size_t n);               // the system 
 uintptr_t   SystemZoneOf(uintptr_t zone);
 void        CurrentSystemZoneName(char* out, size_t n);           // "SolarSystem_<id>" you're in, or ""                         // the SolarSystem_* zone above a zone, or 0
 
-// F7 and F8: save where you're standing (spawn.txt) / go to the saved spot. The teleport built-in's
+// F7 and F8: save where you're standing (the teleport built-in's storage, else spawn.txt) / go to
+// the saved spot. The teleport built-in's
 // commands teleport.save and teleport.go run these (src/builtins/teleport_plugin.cpp). `why` names
 // the caller in mod.log ("F7", "teleport.go"); reply gets a short message either way. False when it
 // didn't happen. Game thread.
@@ -55,5 +62,7 @@ bool GoToSavedSpot(const char* why, char* reply, size_t n);
 void TeleportSaveHotkey();
 void TeleportGoHotkey();
 
+// Before the host kit starts: the first TeleportTick loads the spot (storage, importing spawn.txt
+// once; spawn.txt without storage).
 void LoadSavedSpot(bool startingOverDaymar);
 void TeleportTick(DWORD now);
