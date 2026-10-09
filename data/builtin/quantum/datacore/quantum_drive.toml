@@ -1,0 +1,1481 @@
+# quantum_drive: the new quantum drive (Star Citizen 4.10's SCItemQuantumDriveParams_NEW, with
+# boost) given to the Wetkah Beacon, the quantum drive sc-offline's Gladius flies with. This is
+# sc-offline's built-in data pack: sco-core's pack loader applies it as the game loads
+# Data\Game2.dcb (sco::game::pak), and mod.log reports it ("[+] new quantum drive: ...").
+#
+# Hand-maintained (design decision 11). It was produced once, from sc-offline's former byte patch
+# (src/dcb_patch.h, 15 edits made for 4.10.193), with
+#     sco-dcb diff <4.10.193 Game2.dcb> <the same file with dcb_patch.h applied>
+# then tidied: readable ids, curve points as single appends, components found by their type
+# instead of their index, and no `= 0` / `= false` sets on new instances (they start
+# zero-filled). Edit it by hand from now on; records and fields are found by name, so it keeps
+# working across game patches while they exist. After a game update:
+#     sco-dcb check <Game2.dcb> data/builtin/quantum      (exit 0: everything applies)
+# Format: sco-core docs/datacore.md, "Pack format". All of it applies, or none of it does.
+format = 1
+atomic = true
+
+# ==== The drive's parameters: a new SCItemQuantumDriveParams_NEW, then its effects ===========
+
+[[instance]]
+id = "drive"
+struct = "SCItemQuantumDriveParams_NEW"
+
+# ---- Heat: the thermal draw of each phase.
+
+[[set]]
+instance = "@drive"
+field = "heatParams.preRampUpThermalEnergyDraw"
+value = 1350.0
+
+[[set]]
+instance = "@drive"
+field = "heatParams.rampUpThermalEnergyDraw"
+value = 1350.0
+
+[[set]]
+instance = "@drive"
+field = "heatParams.inFlightThermalEnergyDraw"
+value = 1350.0
+
+[[set]]
+instance = "@drive"
+field = "heatParams.rampDownThermalEnergyDraw"
+value = 1350.0
+
+[[set]]
+instance = "@drive"
+field = "heatParams.postRampDownThermalEnergyDraw"
+value = 1350.0
+
+# ==== Particle effects: the preset, its tag and trigger effects and their attachment slots ====
+
+[[instance]]
+id = "effects"
+struct = "Behavior_CustomQuantumDriveEffectsPreset"
+
+[[set]]
+instance = "@effects"
+field = "particleEffects.enabled"
+value = true
+
+[[set]]
+instance = "@effects"
+field = "particleEffects.allowMultipleTags"
+value = true
+
+[[instance]]
+id = "tag1"
+struct = "SEntityEffectSystem_ParticleTagEffect"
+
+[[set]]
+instance = "@tag1"
+field = "name"
+value = ""
+
+[[set]]
+instance = "@tag1"
+field = "enabled"
+value = true
+
+[[set]]
+instance = "@tag1"
+field = "clipToVisArea"
+value = { enum = "Local" }
+
+[[set]]
+instance = "@tag1"
+field = "gpuVisAreaCullingMode"
+value = { enum = "Default" }
+
+[[set]]
+instance = "@tag1"
+field = "particleEffect.path"
+value = "dd723f94-dc03-5933-4c62-20fc1dd7fed7|Spaceships/Quantum_Travel/quantum_travel.qt_jump_small.qt_illumination_small"
+
+[[instance]]
+id = "slot1"
+struct = "SEntityEffectSystem_Attachment_EntitySlot"
+
+[[set]]
+instance = "@slot1"
+field = "offsetParameter"
+pointer = "null"
+
+[[set]]
+instance = "@tag1"
+field = "attachmentSettings"
+pointer = "@slot1"
+
+[[set]]
+instance = "@tag1"
+field = "tag"
+value = { ref = "guid:ab077f9d-084f-4a5b-a3bc-e799e62dac71" }
+
+[[append]]
+instance = "@effects"
+field = "particleEffects.tagEffects"
+element = "@tag1"
+
+[[instance]]
+id = "tag2"
+struct = "SEntityEffectSystem_ParticleTagEffect"
+
+[[set]]
+instance = "@tag2"
+field = "name"
+value = ""
+
+[[set]]
+instance = "@tag2"
+field = "enabled"
+value = true
+
+[[set]]
+instance = "@tag2"
+field = "clipToVisArea"
+value = { enum = "Local" }
+
+[[set]]
+instance = "@tag2"
+field = "gpuVisAreaCullingMode"
+value = { enum = "Default" }
+
+[[set]]
+instance = "@tag2"
+field = "particleEffect.path"
+value = "53ccb8ec-13ba-3ddb-f01b-f99825f0df21|Spaceships/Quantum_Travel/quantum_travel.qt_jump_small.qt_projectile_small"
+
+[[instance]]
+id = "slot2"
+struct = "SEntityEffectSystem_Attachment_EntitySlot"
+
+[[set]]
+instance = "@slot2"
+field = "offsetParameter"
+value = { ref = "guid:c3dc9216-2f87-4301-9446-fc769f107c2c" }
+
+[[set]]
+instance = "@tag2"
+field = "attachmentSettings"
+pointer = "@slot2"
+
+[[set]]
+instance = "@tag2"
+field = "tag"
+value = { ref = "guid:297e72f3-5cba-4550-b641-be4da358cfae" }
+
+[[append]]
+instance = "@effects"
+field = "particleEffects.tagEffects"
+element = "@tag2"
+
+[[instance]]
+id = "tag3"
+struct = "SEntityEffectSystem_ParticleTagEffect"
+
+[[set]]
+instance = "@tag3"
+field = "name"
+value = ""
+
+[[set]]
+instance = "@tag3"
+field = "enabled"
+value = true
+
+[[set]]
+instance = "@tag3"
+field = "clipToVisArea"
+value = { enum = "Local" }
+
+[[set]]
+instance = "@tag3"
+field = "gpuVisAreaCullingMode"
+value = { enum = "Default" }
+
+[[set]]
+instance = "@tag3"
+field = "particleEffect.path"
+value = "14060f15-047d-a2f1-56af-de8fae098f29|Spaceships/Quantum_Travel/quantum_travel.qt_jump_small.qt_origin_open_small"
+
+[[instance]]
+id = "slot3"
+struct = "SEntityEffectSystem_Attachment_EntitySlot"
+
+[[set]]
+instance = "@slot3"
+field = "offsetParameter"
+value = { ref = "guid:cd0c5309-16cb-4eeb-8887-74251975d00d" }
+
+[[set]]
+instance = "@tag3"
+field = "attachmentSettings"
+pointer = "@slot3"
+
+[[set]]
+instance = "@tag3"
+field = "tag"
+value = { ref = "guid:0ffb53d4-fe17-456b-ba28-b16992cc5a0a" }
+
+[[append]]
+instance = "@effects"
+field = "particleEffects.tagEffects"
+element = "@tag3"
+
+[[instance]]
+id = "tag4"
+struct = "SEntityEffectSystem_ParticleTagEffect"
+
+[[set]]
+instance = "@tag4"
+field = "name"
+value = ""
+
+[[set]]
+instance = "@tag4"
+field = "enabled"
+value = true
+
+[[set]]
+instance = "@tag4"
+field = "clipToVisArea"
+value = { enum = "Local" }
+
+[[set]]
+instance = "@tag4"
+field = "gpuVisAreaCullingMode"
+value = { enum = "Default" }
+
+[[set]]
+instance = "@tag4"
+field = "particleEffect.path"
+value = "ffc6fdf4-79a3-ecd3-ccfd-84c459204ca5|Spaceships/Quantum_Travel/quantum_travel.qt_transit_bubble_interior_small.qt_transit_bubble_interior_small"
+
+[[set]]
+instance = "@tag4"
+field = "attachmentSettings"
+pointer = "@slot1"
+
+[[set]]
+instance = "@tag4"
+field = "tag"
+value = { ref = "guid:6684f2e3-6ba2-4b1f-a2c0-a99f8cc4e1ee" }
+
+[[append]]
+instance = "@effects"
+field = "particleEffects.tagEffects"
+element = "@tag4"
+
+[[instance]]
+id = "tag5"
+struct = "SEntityEffectSystem_ParticleTagEffect"
+
+[[set]]
+instance = "@tag5"
+field = "name"
+value = ""
+
+[[set]]
+instance = "@tag5"
+field = "enabled"
+value = true
+
+[[set]]
+instance = "@tag5"
+field = "clipToVisArea"
+value = { enum = "Local" }
+
+[[set]]
+instance = "@tag5"
+field = "gpuVisAreaCullingMode"
+value = { enum = "Default" }
+
+[[set]]
+instance = "@tag5"
+field = "particleEffect.path"
+value = "8e13fe75-9ede-0a5c-5392-bd332cd61c33|Spaceships/Quantum_Travel/quantum_travel.qt_boost_transit_small.qt_boost_transit_small"
+
+[[instance]]
+id = "slot4"
+struct = "SEntityEffectSystem_Attachment_EntitySlot"
+
+[[set]]
+instance = "@slot4"
+field = "offsetParameter"
+value = { ref = "guid:8c95c66e-f806-4ed2-97ee-b0b291970fd6" }
+
+[[set]]
+instance = "@tag5"
+field = "attachmentSettings"
+pointer = "@slot4"
+
+[[set]]
+instance = "@tag5"
+field = "tag"
+value = { ref = "guid:3eb83a61-655c-46b1-a440-fcb16f5cfde3" }
+
+[[append]]
+instance = "@effects"
+field = "particleEffects.tagEffects"
+element = "@tag5"
+
+[[instance]]
+id = "tag6"
+struct = "SEntityEffectSystem_ParticleTagEffect"
+
+[[set]]
+instance = "@tag6"
+field = "name"
+value = ""
+
+[[set]]
+instance = "@tag6"
+field = "enabled"
+value = true
+
+[[set]]
+instance = "@tag6"
+field = "clipToVisArea"
+value = { enum = "Local" }
+
+[[set]]
+instance = "@tag6"
+field = "gpuVisAreaCullingMode"
+value = { enum = "Default" }
+
+[[set]]
+instance = "@tag6"
+field = "particleEffect.path"
+value = "fae6de7e-dc0e-3cb8-87c9-af8215f24329|Spaceships/Quantum_Travel/quantum_travel.qt_casting.qt_casting"
+
+[[set]]
+instance = "@tag6"
+field = "attachmentSettings"
+pointer = "@slot3"
+
+[[instance]]
+id = "tag6_link1"
+struct = "SEntityEffectSystem_ParticlePropertyLink"
+
+[[set]]
+instance = "@tag6_link1"
+field = "parameterName"
+value = { ref = "guid:599d8f8e-d19b-4bfc-b455-85849c71e11d" }
+
+[[set]]
+instance = "@tag6_link1"
+field = "particleProperty"
+value = { enum = "strength" }
+
+[[append]]
+instance = "@tag6"
+field = "propertyLinks"
+element = "@tag6_link1"
+
+[[instance]]
+id = "tag6_link2"
+struct = "SEntityEffectSystem_ParticlePropertyLink"
+
+[[set]]
+instance = "@tag6_link2"
+field = "parameterName"
+value = { ref = "guid:c03fe6be-a271-4d98-96d0-dd9b342f92ed" }
+
+[[set]]
+instance = "@tag6_link2"
+field = "particleProperty"
+value = { enum = "count" }
+
+[[append]]
+instance = "@tag6"
+field = "propertyLinks"
+element = "@tag6_link2"
+
+[[set]]
+instance = "@tag6"
+field = "tag"
+value = { ref = "guid:5d352bdd-2f39-44d1-985a-b2ecb4c99ab7" }
+
+[[append]]
+instance = "@effects"
+field = "particleEffects.tagEffects"
+element = "@tag6"
+
+[[instance]]
+id = "tag7"
+struct = "SEntityEffectSystem_ParticleTagEffect"
+
+[[set]]
+instance = "@tag7"
+field = "name"
+value = ""
+
+[[set]]
+instance = "@tag7"
+field = "enabled"
+value = true
+
+[[set]]
+instance = "@tag7"
+field = "clipToVisArea"
+value = { enum = "Local" }
+
+[[set]]
+instance = "@tag7"
+field = "gpuVisAreaCullingMode"
+value = { enum = "Default" }
+
+[[set]]
+instance = "@tag7"
+field = "particleEffect.path"
+value = "9daed98e-4bc4-f9d3-6a5d-1d4f9fdb29d4|Spaceships/Quantum_Travel/quantum_travel.qt_exit_arrival_flare.qt_exit_arrival_flare"
+
+[[set]]
+instance = "@tag7"
+field = "attachmentSettings"
+pointer = "@slot1"
+
+[[set]]
+instance = "@tag7"
+field = "tag"
+value = { ref = "guid:4a47a09d-a450-4e75-a757-07bbd2ddc8a4" }
+
+[[append]]
+instance = "@effects"
+field = "particleEffects.tagEffects"
+element = "@tag7"
+
+[[instance]]
+id = "trigger1"
+struct = "SEntityEffectSystem_ParticleTriggerEffect"
+
+[[set]]
+instance = "@trigger1"
+field = "name"
+value = ""
+
+[[set]]
+instance = "@trigger1"
+field = "enabled"
+value = true
+
+[[set]]
+instance = "@trigger1"
+field = "clipToVisArea"
+value = { enum = "Local" }
+
+[[set]]
+instance = "@trigger1"
+field = "gpuVisAreaCullingMode"
+value = { enum = "Default" }
+
+[[set]]
+instance = "@trigger1"
+field = "particleEffect.path"
+value = "789ec897-05fd-a5cb-146d-c85c04d7934f|Spaceships/Quantum_Travel/quantum_travel.qt_jump_small.qt_origin_close_small"
+
+[[set]]
+instance = "@trigger1"
+field = "attachmentSettings"
+pointer = "@slot3"
+
+[[set]]
+instance = "@trigger1"
+field = "trigger"
+value = { ref = "guid:463202f4-ef22-448a-800f-99c152990c6f" }
+
+[[append]]
+instance = "@effects"
+field = "particleEffects.triggerEffects"
+element = "@trigger1"
+
+[[instance]]
+id = "trigger2"
+struct = "SEntityEffectSystem_ParticleTriggerEffect"
+
+[[set]]
+instance = "@trigger2"
+field = "name"
+value = ""
+
+[[set]]
+instance = "@trigger2"
+field = "enabled"
+value = true
+
+[[set]]
+instance = "@trigger2"
+field = "clipToVisArea"
+value = { enum = "Local" }
+
+[[set]]
+instance = "@trigger2"
+field = "gpuVisAreaCullingMode"
+value = { enum = "Default" }
+
+[[set]]
+instance = "@trigger2"
+field = "particleEffect.path"
+value = "d7ac6926-178d-8b63-edcc-dd9bea681b36|Spaceships/Quantum_Travel/quantum_travel.qt_jump_small.qt_exit_flash_small"
+
+[[set]]
+instance = "@trigger2"
+field = "attachmentSettings"
+pointer = "@slot1"
+
+[[set]]
+instance = "@trigger2"
+field = "trigger"
+value = { ref = "guid:91819622-8f31-4ff3-85ad-ba9ce72dee40" }
+
+[[append]]
+instance = "@effects"
+field = "particleEffects.triggerEffects"
+element = "@trigger2"
+
+[[instance]]
+id = "trigger3"
+struct = "SEntityEffectSystem_ParticleTriggerEffect"
+
+[[set]]
+instance = "@trigger3"
+field = "name"
+value = ""
+
+[[set]]
+instance = "@trigger3"
+field = "enabled"
+value = true
+
+[[set]]
+instance = "@trigger3"
+field = "clipToVisArea"
+value = { enum = "Local" }
+
+[[set]]
+instance = "@trigger3"
+field = "gpuVisAreaCullingMode"
+value = { enum = "Default" }
+
+[[set]]
+instance = "@trigger3"
+field = "particleEffect.path"
+value = "b640e410-4b97-cdf9-bfe9-61de57b37181|Spaceships/Quantum_Travel/quantum_travel.qt_exit_interior_small.qt_exit_interior_small"
+
+[[instance]]
+id = "slot5"
+struct = "SEntityEffectSystem_Attachment_EntitySlot"
+
+[[set]]
+instance = "@slot5"
+field = "offsetParameter"
+value = { ref = "guid:b1e5ebe3-3c01-4e67-82c0-20fd696a6fc9" }
+
+[[set]]
+instance = "@trigger3"
+field = "attachmentSettings"
+pointer = "@slot5"
+
+[[set]]
+instance = "@trigger3"
+field = "trigger"
+value = { ref = "guid:a4f31401-a776-4835-9ae2-bf24474a2d25" }
+
+[[append]]
+instance = "@effects"
+field = "particleEffects.triggerEffects"
+element = "@trigger3"
+
+[[instance]]
+id = "trigger4"
+struct = "SEntityEffectSystem_ParticleTriggerEffect"
+
+[[set]]
+instance = "@trigger4"
+field = "name"
+value = ""
+
+[[set]]
+instance = "@trigger4"
+field = "enabled"
+value = true
+
+[[set]]
+instance = "@trigger4"
+field = "clipToVisArea"
+value = { enum = "Local" }
+
+[[set]]
+instance = "@trigger4"
+field = "gpuVisAreaCullingMode"
+value = { enum = "Default" }
+
+[[set]]
+instance = "@trigger4"
+field = "particleEffect.path"
+value = "b9125e1a-c0fb-b91f-f76e-ce7eb473ae24|Spaceships/Quantum_Travel/quantum_travel.qt_boost_exit_interior_small.qt_boost_exit_interior_small"
+
+[[set]]
+instance = "@trigger4"
+field = "attachmentSettings"
+pointer = "@slot5"
+
+[[set]]
+instance = "@trigger4"
+field = "trigger"
+value = { ref = "guid:02261309-cad0-435d-be27-c084ad3d44aa" }
+
+[[append]]
+instance = "@effects"
+field = "particleEffects.triggerEffects"
+element = "@trigger4"
+
+# ---- Effects: the particle preset below.
+
+[[set]]
+instance = "@drive"
+field = "effectParams.quantumParticleEffects"
+pointer = "@effects"
+
+[[set]]
+instance = "@drive"
+field = "effectParams.quantumTrailEffect"
+pointer = "null"
+
+[[set]]
+instance = "@drive"
+field = "effectParams.shieldProjectileRelativeTime"
+value = 50.0
+
+[[set]]
+instance = "@drive"
+field = "effectParams.boostChargeShieldPulseRelativeTime"
+value = 50.0
+
+[[set]]
+instance = "@drive"
+field = "effectParams.shipBoundsScale"
+value = 100.0
+
+[[set]]
+instance = "@drive"
+field = "effectParams.originOffsetDistance"
+value = 40.0
+
+[[set]]
+instance = "@drive"
+field = "effectParams.castingOffsetDistance"
+value = 40.0
+
+[[set]]
+instance = "@drive"
+field = "effectParams.interiorTransitExitOffsetDistance"
+value = 15.0
+
+[[set]]
+instance = "@drive"
+field = "effectParams.effectScaling"
+value = 100.0
+
+[[set]]
+instance = "@drive"
+field = "effectParams.shieldPulseEffectScale"
+value = 100.0
+
+[[set]]
+instance = "@drive"
+field = "effectParams.shieldPulseEmissionScale"
+value = 100.0
+
+[[set]]
+instance = "@drive"
+field = "effectParams.chromaticShiftVelocityRange.maximum"
+value = 1.0
+
+# Shared with the stock drive: the effect tags and the resource-network states point at the
+# Beacon's own instances (found by component type), so they follow the game's data.
+[[set]]
+instance = "@drive"
+field = "effectTags"
+pointer = { record = "EntityClassDefinition.QDRV_WETK_S01_Beacon_SCItem", field = "Components[SCItemQuantumDriveParams].params.effectTags" }
+
+[[set]]
+instance = "@drive"
+field = "resourceNetworkParams.idleState"
+pointer = { record = "EntityClassDefinition.QDRV_WETK_S01_Beacon_SCItem", field = "Components[ItemResourceComponentParams].states[0]" }
+
+[[set]]
+instance = "@drive"
+field = "resourceNetworkParams.spoolingState"
+pointer = { record = "EntityClassDefinition.QDRV_WETK_S01_Beacon_SCItem", field = "Components[ItemResourceComponentParams].states[0]" }
+
+[[set]]
+instance = "@drive"
+field = "resourceNetworkParams.travellingState"
+pointer = { record = "EntityClassDefinition.QDRV_WETK_S01_Beacon_SCItem", field = "Components[ItemResourceComponentParams].states[1]" }
+
+[[set]]
+instance = "@drive"
+field = "tracePoint"
+value = ""
+
+[[set]]
+instance = "@drive"
+field = "spoolUpTime"
+value = 4.4
+
+[[set]]
+instance = "@drive"
+field = "quantumFuelRequirement"
+value = 0.01862
+
+[[set]]
+instance = "@drive"
+field = "disableCharge"
+value = 1e+09
+
+[[set]]
+instance = "@drive"
+field = "jumpRange"
+value = 3.402823e+38
+
+[[set]]
+instance = "@drive"
+field = "disconnectRange"
+value = 21656.0
+
+[[set]]
+instance = "@drive"
+field = "trailEntityClass"
+pointer = "null"
+
+# ---- Boost: the Caps Lock boost (speed, acceleration, how long it lasts).
+
+[[set]]
+instance = "@drive"
+field = "boosting.minSpeed"
+value = 1000.0
+
+[[set]]
+instance = "@drive"
+field = "boosting.maxSpeed"
+value = 1e+07
+
+[[set]]
+instance = "@drive"
+field = "boosting.timeToFullSpeed"
+value = 8.0
+
+[[set]]
+instance = "@drive"
+field = "boosting.timeToStopMultiplier"
+value = 1.0
+
+[[set]]
+instance = "@drive"
+field = "boosting.minStopDistance"
+value = 1000.0
+
+[[set]]
+instance = "@drive"
+field = "boosting.maxUseTime"
+value = 120.0
+
+# ---- Travel: coast speed, timing and the ship's rotation in the tunnel.
+
+[[set]]
+instance = "@drive"
+field = "travelling.maxCoastSpeed"
+value = 1.614109e+08
+
+[[set]]
+instance = "@drive"
+field = "travelling.timeToMaxCoastSpeed"
+value = 10.0
+
+[[set]]
+instance = "@drive"
+field = "travelling.stabilizationTime"
+value = 2.0
+
+[[set]]
+instance = "@drive"
+field = "travelling.minTravelTime"
+value = 1.0
+
+[[set]]
+instance = "@drive"
+field = "travelling.targetMinRange"
+value = 20000.0
+
+[[set]]
+instance = "@drive"
+field = "travelling.maxUseTime"
+value = 3600.0
+
+[[set]]
+instance = "@drive"
+field = "travelling.stopTime"
+value = 3.0
+
+[[set]]
+instance = "@drive"
+field = "travelling.rotation.maxAngVelocity.x"
+value = 30.0
+
+[[set]]
+instance = "@drive"
+field = "travelling.rotation.maxAngVelocity.y"
+value = 30.0
+
+[[set]]
+instance = "@drive"
+field = "travelling.rotation.maxAngVelocity.z"
+value = 30.0
+
+[[set]]
+instance = "@drive"
+field = "travelling.rotation.timeToFullAngVelocity.x"
+value = 1.0
+
+[[set]]
+instance = "@drive"
+field = "travelling.rotation.timeToFullAngVelocity.y"
+value = 1.0
+
+[[set]]
+instance = "@drive"
+field = "travelling.rotation.timeToFullAngVelocity.z"
+value = 1.0
+
+[[append]]
+instance = "@drive"
+field = "travelling.rotation.vibrationBoostAngleOffset.points"
+value = { struct = "Vec2", set = { x = -0.33333334, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "travelling.rotation.vibrationBoostAngleOffset.points"
+value = { struct = "Vec2", set = { x = 0.0, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "travelling.rotation.vibrationBoostAngleOffset.points"
+value = { struct = "Vec2", set = { x = 0.33333334, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "travelling.rotation.vibrationBoostAngleOffset.points"
+value = { struct = "Vec2", set = { x = 0.6666667, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "travelling.rotation.vibrationBoostAngleOffset.points"
+value = { struct = "Vec2", set = { x = 1.0, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "travelling.rotation.vibrationBoostAngleOffset.points"
+value = { struct = "Vec2", set = { x = 1.3333334, y = 0.0 } }
+
+[[set]]
+instance = "@drive"
+field = "travelling.rotation.turbulenceTimeToFullPitchYawSpeed"
+value = 1.0
+
+[[set]]
+instance = "@drive"
+field = "travelling.rotation.turbulenceTimeToFullRollSpeed"
+value = 1.0
+
+# ---- Bubble integrity: how alignment and speed wear the quantum bubble (curves as Vec2 points).
+
+[[set]]
+instance = "@drive"
+field = "bubbleIntegrity.referenceAngle"
+value = 30.0
+
+[[set]]
+instance = "@drive"
+field = "bubbleIntegrity.alignmentCrossoverPointRatio"
+value = 0.5
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.increaseValueMapping.points"
+value = { struct = "Vec2", set = { x = -0.33333334, y = -0.33333334 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.increaseValueMapping.points"
+value = { struct = "Vec2", set = { x = 0.0, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.increaseValueMapping.points"
+value = { struct = "Vec2", set = { x = 0.33333334, y = 0.33333334 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.increaseValueMapping.points"
+value = { struct = "Vec2", set = { x = 0.6666667, y = 0.6666667 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.increaseValueMapping.points"
+value = { struct = "Vec2", set = { x = 1.0, y = 1.0 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.increaseValueMapping.points"
+value = { struct = "Vec2", set = { x = 1.3333334, y = 1.3333334 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.decreaseValueMapping.points"
+value = { struct = "Vec2", set = { x = -0.33333334, y = -0.33333334 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.decreaseValueMapping.points"
+value = { struct = "Vec2", set = { x = 0.0, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.decreaseValueMapping.points"
+value = { struct = "Vec2", set = { x = 0.33333334, y = 0.33333334 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.decreaseValueMapping.points"
+value = { struct = "Vec2", set = { x = 0.6666667, y = 0.6666667 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.decreaseValueMapping.points"
+value = { struct = "Vec2", set = { x = 1.0, y = 1.0 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.decreaseValueMapping.points"
+value = { struct = "Vec2", set = { x = 1.3333334, y = 1.3333334 } }
+
+[[set]]
+instance = "@drive"
+field = "bubbleIntegrity.bestIntegrityIncreaseTime"
+value = 1.0
+
+[[set]]
+instance = "@drive"
+field = "bubbleIntegrity.worstIntegrityDecreaseTime"
+value = 10.0
+
+[[set]]
+instance = "@drive"
+field = "bubbleIntegrity.collapseTime"
+value = 1.0
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.relativeCoastSpeedFactor.points"
+value = { struct = "Vec2", set = { x = -0.33333334, y = 1.0 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.relativeCoastSpeedFactor.points"
+value = { struct = "Vec2", set = { x = 0.0, y = 1.0 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.relativeCoastSpeedFactor.points"
+value = { struct = "Vec2", set = { x = 0.33333334, y = 1.0 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.relativeCoastSpeedFactor.points"
+value = { struct = "Vec2", set = { x = 0.6666667, y = 1.0 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.relativeCoastSpeedFactor.points"
+value = { struct = "Vec2", set = { x = 1.0, y = 1.0 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.relativeCoastSpeedFactor.points"
+value = { struct = "Vec2", set = { x = 1.3333334, y = 1.0 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.relativeCapacityCostFactor.points"
+value = { struct = "Vec2", set = { x = -0.33333334, y = 1.0 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.relativeCapacityCostFactor.points"
+value = { struct = "Vec2", set = { x = 0.0, y = 1.0 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.relativeCapacityCostFactor.points"
+value = { struct = "Vec2", set = { x = 0.33333334, y = 1.0 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.relativeCapacityCostFactor.points"
+value = { struct = "Vec2", set = { x = 0.6666667, y = 1.0 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.relativeCapacityCostFactor.points"
+value = { struct = "Vec2", set = { x = 1.0, y = 1.0 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.relativeCapacityCostFactor.points"
+value = { struct = "Vec2", set = { x = 1.3333334, y = 1.0 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.vibrationBubbleIntegrity.points"
+value = { struct = "Vec2", set = { x = -0.33333334, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.vibrationBubbleIntegrity.points"
+value = { struct = "Vec2", set = { x = 0.0, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.vibrationBubbleIntegrity.points"
+value = { struct = "Vec2", set = { x = 0.33333334, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.vibrationBubbleIntegrity.points"
+value = { struct = "Vec2", set = { x = 0.6666667, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.vibrationBubbleIntegrity.points"
+value = { struct = "Vec2", set = { x = 1.0, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "bubbleIntegrity.vibrationBubbleIntegrity.points"
+value = { struct = "Vec2", set = { x = 1.3333334, y = 0.0 } }
+
+# ---- Vibration: the shake curves while spooling, travelling and cancelling.
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationPreparing.points"
+value = { struct = "Vec2", set = { x = -0.33333334, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationPreparing.points"
+value = { struct = "Vec2", set = { x = 0.0, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationPreparing.points"
+value = { struct = "Vec2", set = { x = 0.33333334, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationPreparing.points"
+value = { struct = "Vec2", set = { x = 0.6666667, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationPreparing.points"
+value = { struct = "Vec2", set = { x = 1.0, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationPreparing.points"
+value = { struct = "Vec2", set = { x = 1.3333334, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationSpeed.points"
+value = { struct = "Vec2", set = { x = -0.33333334, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationSpeed.points"
+value = { struct = "Vec2", set = { x = 0.0, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationSpeed.points"
+value = { struct = "Vec2", set = { x = 0.33333334, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationSpeed.points"
+value = { struct = "Vec2", set = { x = 0.6666667, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationSpeed.points"
+value = { struct = "Vec2", set = { x = 1.0, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationSpeed.points"
+value = { struct = "Vec2", set = { x = 1.3333334, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationCancel.points"
+value = { struct = "Vec2", set = { x = -0.33333334, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationCancel.points"
+value = { struct = "Vec2", set = { x = 0.0, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationCancel.points"
+value = { struct = "Vec2", set = { x = 0.33333334, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationCancel.points"
+value = { struct = "Vec2", set = { x = 0.6666667, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationCancel.points"
+value = { struct = "Vec2", set = { x = 1.0, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationCancel.points"
+value = { struct = "Vec2", set = { x = 1.3333334, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationCancelTime.points"
+value = { struct = "Vec2", set = { x = -0.33333334, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationCancelTime.points"
+value = { struct = "Vec2", set = { x = 0.0, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationCancelTime.points"
+value = { struct = "Vec2", set = { x = 0.33333334, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationCancelTime.points"
+value = { struct = "Vec2", set = { x = 0.6666667, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationCancelTime.points"
+value = { struct = "Vec2", set = { x = 1.0, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationCancelTime.points"
+value = { struct = "Vec2", set = { x = 1.3333334, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationCooldown.points"
+value = { struct = "Vec2", set = { x = -0.33333334, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationCooldown.points"
+value = { struct = "Vec2", set = { x = 0.0, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationCooldown.points"
+value = { struct = "Vec2", set = { x = 0.33333334, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationCooldown.points"
+value = { struct = "Vec2", set = { x = 0.6666667, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationCooldown.points"
+value = { struct = "Vec2", set = { x = 1.0, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.vibrationCooldown.points"
+value = { struct = "Vec2", set = { x = 1.3333334, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.processInitialVibrationCurve.points"
+value = { struct = "Vec2", set = { x = -0.33333334, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.processInitialVibrationCurve.points"
+value = { struct = "Vec2", set = { x = 0.0, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.processInitialVibrationCurve.points"
+value = { struct = "Vec2", set = { x = 0.33333334, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.processInitialVibrationCurve.points"
+value = { struct = "Vec2", set = { x = 0.6666667, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.processInitialVibrationCurve.points"
+value = { struct = "Vec2", set = { x = 1.0, y = 0.0 } }
+
+[[append]]
+instance = "@drive"
+field = "vibration.processInitialVibrationCurve.points"
+value = { struct = "Vec2", set = { x = 1.3333334, y = 0.0 } }
+
+[[set]]
+instance = "@drive"
+field = "timers.travelTimers.ifcsHandoverTimeSuccess"
+value = 1.0
+
+[[set]]
+instance = "@drive"
+field = "timers.travelTimers.ifcsHandoverTimeFailed"
+value = 1.0
+
+[[set]]
+instance = "@drive"
+field = "timers.travelTimers.ifcsRespoolTimeSuccess"
+value = 1.0
+
+[[set]]
+instance = "@drive"
+field = "timers.travelTimers.ifcsRespoolTimeFailed"
+value = 1.0
+
+[[set]]
+instance = "@drive"
+field = "timers.boostTimers.ifcsHandoverTimeSuccess"
+value = 1.0
+
+[[set]]
+instance = "@drive"
+field = "timers.boostTimers.ifcsHandoverTimeFailed"
+value = 1.0
+
+[[set]]
+instance = "@drive"
+field = "timers.boostTimers.ifcsRespoolTimeSuccess"
+value = 1.0
+
+[[set]]
+instance = "@drive"
+field = "timers.boostTimers.ifcsRespoolTimeFailed"
+value = 1.0
+
+# ---- HUD messages: the failure message slots (the game's placeholder text).
+
+[[set]]
+instance = "@drive"
+field = "hudMessages.boostingInitiated"
+value = ""
+
+[[set]]
+instance = "@drive"
+field = "hudMessages.boostingStarted"
+value = ""
+
+[[set]]
+instance = "@drive"
+field = "hudMessages.boostingCancelInitiated"
+value = ""
+
+[[set]]
+instance = "@drive"
+field = "hudMessages.travelInitiated"
+value = ""
+
+[[set]]
+instance = "@drive"
+field = "hudMessages.travelStarted"
+value = ""
+
+[[set]]
+instance = "@drive"
+field = "hudMessages.travelCancelInitiated"
+value = ""
+
+[[set]]
+instance = "@drive"
+field = "hudMessages.blindBoostDisabledMessage"
+value = ""
+
+[[set]]
+instance = "@drive"
+field = "hudMessages.waitingForGroupMember"
+value = ""
+
+[[set]]
+instance = "@drive"
+field = "hudMessages.travelBlocked"
+value = ""
+
+[[set]]
+instance = "@drive"
+field = "hudMessages.travelUnblocked"
+value = ""
+
+[[set]]
+instance = "@drive"
+field = "hudMessages.boostBlocked"
+value = ""
+
+[[set]]
+instance = "@drive"
+field = "hudMessages.boostUnblocked"
+value = ""
+
+[[append]]
+instance = "@drive"
+field = "hudMessages.failureMessages"
+value = "@LOC_UNINITIALIZED"
+
+[[append]]
+instance = "@drive"
+field = "hudMessages.failureMessages"
+value = "@LOC_UNINITIALIZED"
+
+[[append]]
+instance = "@drive"
+field = "hudMessages.failureMessages"
+value = "@LOC_UNINITIALIZED"
+
+[[append]]
+instance = "@drive"
+field = "hudMessages.failureMessages"
+value = "@LOC_UNINITIALIZED"
+
+[[append]]
+instance = "@drive"
+field = "hudMessages.failureMessages"
+value = "@LOC_UNINITIALIZED"
+
+[[append]]
+instance = "@drive"
+field = "hudMessages.failureMessages"
+value = "@LOC_UNINITIALIZED"
+
+[[append]]
+instance = "@drive"
+field = "hudMessages.failureMessages"
+value = "@LOC_UNINITIALIZED"
+
+[[append]]
+instance = "@drive"
+field = "hudMessages.failureMessages"
+value = "@LOC_UNINITIALIZED"
+
+[[append]]
+instance = "@drive"
+field = "hudMessages.failureMessages"
+value = "@LOC_UNINITIALIZED"
+
+[[append]]
+instance = "@drive"
+field = "hudMessages.failureMessages"
+value = "@LOC_UNINITIALIZED"
+
+[[append]]
+instance = "@drive"
+field = "hudMessages.failureMessages"
+value = "@LOC_UNINITIALIZED"
+
+[[append]]
+instance = "@drive"
+field = "hudMessages.failureMessages"
+value = "@LOC_UNINITIALIZED"
+
+[[append]]
+instance = "@drive"
+field = "hudMessages.failureMessages"
+value = "@LOC_UNINITIALIZED"
+
+[[append]]
+instance = "@drive"
+field = "hudMessages.failureMessages"
+value = "@LOC_UNINITIALIZED"
+
+[[append]]
+instance = "@drive"
+field = "hudMessages.failureMessages"
+value = "@LOC_UNINITIALIZED"
+
+# ---- Audio: the Wwise events for spool, boost, tunnel and exit.
+
+[[set]]
+instance = "@drive"
+field = "audio.bubbleStart.audioTrigger"
+value = "Play_SSCP_Quantum_Drives_1_Start_Spooling"
+
+[[set]]
+instance = "@drive"
+field = "audio.bubbleStop.audioTrigger"
+value = ""
+
+[[set]]
+instance = "@drive"
+field = "audio.bubbleRtpc.rtpc"
+value = "GP_Ship_Quantum_Bubble_Integrity"
+
+[[set]]
+instance = "@drive"
+field = "audio.boostStart.audioTrigger"
+value = "Play_SSQT_Stage_5_Tunnel"
+
+[[set]]
+instance = "@drive"
+field = "audio.boostStop.audioTrigger"
+value = "Play_SSQT_Stage_6_Exit"
+
+[[set]]
+instance = "@drive"
+field = "audio.boostRtpc.rtpc"
+value = ""
+
+[[set]]
+instance = "@drive"
+field = "audio.enterBoost.audioTrigger"
+value = "Play_SSQT_Stage_4_Engage"
+
+[[set]]
+instance = "@drive"
+field = "audio.exitBoost.audioTrigger"
+value = "Play_SSCP_Quantum_Drives_6_Exit_QT"
+
+[[set]]
+instance = "@drive"
+field = "audio.angleOffsetRtpc.rtpc"
+value = ""
+
+# ==== The Beacon's quantum drive component now points at the new parameters ==================
+
+[[set]]
+record = "EntityClassDefinition.QDRV_WETK_S01_Beacon_SCItem"
+guid = "b5cbef86-f37f-4e05-8aff-e0f61afe166e"
+field = "Components[SCItemQuantumDriveParams]"
+pointer = "@drive"
