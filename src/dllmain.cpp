@@ -378,10 +378,7 @@ static DWORD WINAPI ModThread(LPVOID param) {
 }
 
 // sco-core's lines ([core], [plugin], [app], [status]) go to mod.log and the console like ours.
-static void ForwardCoreLog(const char* line) {
-    Log("%s", line);
-    QuantumOnCoreLog(line);
-}
+static void ForwardCoreLog(const char* line) { Log("%s", line); }
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
