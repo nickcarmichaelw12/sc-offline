@@ -123,6 +123,7 @@ add_library(dinput8 SHARED
   src/builtins/contracts_plugin.cpp
   # Their menu tabs, drawn through sco.ui (src/builtins/tabs.h).
   src/builtins/loadout_ui.cpp
+  src/builtins/quantum_ui.cpp
   # Manifest EnableSegmentHeap.
   src/dinput8.manifest
 )
