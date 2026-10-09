@@ -108,6 +108,7 @@ def verify(img):
         assert img.read(0x1439fbca0+offset, len(bytes.fromhex(pattern))) == bytes.fromhex(pattern)
     assert img.read(0x143a3de48, 3) == bytes.fromhex('FF 50 10')
     assert img.read(0x143a3b89c, 4) == bytes.fromhex('41 8B 58 08')
+    assert img.read(0x14395f3e7, 5) == bytes.fromhex('4D 89 6C 24 50')
     assert img.read(0x143960413, 6) == bytes.fromhex('41 83 7C 24 08 04')
     assert img.relative(0x143960419, '0F 84') == 0x1439610c5
     assert img.read(0x147eb4ee0, 9) == b'Elevator\0'

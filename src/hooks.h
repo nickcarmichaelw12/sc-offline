@@ -1,6 +1,9 @@
 #pragma once
 #include "common.h"
 
+// Current game-thread player identity; zero before the player API is available.
+uint64_t LocalPlayerId();
+
 extern bool g_hooksInstalled;
 
 void InstallHooks(const Section& text);

@@ -3,7 +3,6 @@
 #include "services.h"
 #include "hooks.h"
 #include "hangar_future.h"
-#include "teleport.h"
 
 constexpr int kFakeServices = 32;
 constexpr int kFakeSlots = 96;
@@ -187,13 +186,14 @@ static uintptr_t __fastcall RequestInstanceHook(uintptr_t manager, uint64_t owne
         const bool offline = service && g_realHub && !g_realHub(service);
         // Online elevator requests only reopen persisted instances. A new local
         // session has none. Use the native manager's creation-capable origin
-        // for this player's first elevator request, retaining its owner, size,
-        // gateway and promises. Do not restore a potentially erased request.
+        // for this player's elevator request, retaining owner, size, promises
+        // and native gateway selection. The continuation selects request+0x50
+        // later; checking it here would reject every first visit. Do not
+        // restore a potentially erased request after native code returns.
         if (offline && owner && owner == LocalPlayerId() && request
-            && *reinterpret_cast<uint32_t*>(request + 8) == 4
-            && *reinterpret_cast<uintptr_t*>(request + 0x50)) {
+            && *reinterpret_cast<uint32_t*>(request + 8) == 4) {
             *reinterpret_cast<uint32_t*>(request + 8) = 1;
-            Log("[hangar] offline elevator request uses native InstanceManagerDebug creation origin; selected gateway retained");
+            Log("[hangar] offline elevator request uses native InstanceManagerDebug creation origin; native gateway selection retained");
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) { Log("[hangar] elevator creation eligibility could not be read"); }
     ++t_inInstanceRequest;

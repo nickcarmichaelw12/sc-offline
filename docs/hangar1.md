@@ -22,9 +22,11 @@ choices from its local manager/gateway information.
 
 Native elevator origin 4 refuses to create a missing instance; it only reopens
 one found by the persistence lookup. For an offline request owned by the local
-player with an already selected gateway, the adapter changes that request's
+player, the adapter changes that request's
 origin to the native creation-capable InstanceManagerDebug value 1. Owner,
-size, gateway, callbacks and native creation/registration remain intact. The
+size, gateway selection, callbacks and native creation/registration remain intact.
+The continuation selects the gateway later at 0x14395f3e7; requiring a non-null
+gateway before invoking it would incorrectly block a first visit. The
 request may be erased during its synchronous continuation, so the adapter does
 not touch it after returning from native code. Other owners and real-service
 requests retain their origin. ABI/continuation guards disable these hooks when

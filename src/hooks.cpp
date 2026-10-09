@@ -590,7 +590,8 @@ static bool PrepareDeliverVehicle(uint8_t* target) {
         && BytesMatch(target + 0x101, "48 8B 16 4D 8B BE F0 00 00 00 48 69 CA C0 16 00 00 49 81 C7 98 16 00 00");
 }
 
-static uint64_t LocalPlayerId() {
+uint64_t LocalPlayerId() {
+    if (!g_tp.clientMgr) return 0;
     const uintptr_t mgr = *g_tp.clientMgr;
     const uintptr_t sub = mgr ? Rd<uintptr_t>(mgr + 0xE0) : 0;
     const uintptr_t info = sub ? VCall<uintptr_t>(sub, 0x2E0) : 0;
