@@ -6,6 +6,7 @@
 // build-mode keys as before: F6 toggles build mode, Backspace undoes, [ ] change reach, R rotates,
 // the left mouse button places. The mechanics stay in build.cpp.
 #include "builtins.h"
+#include "tabs.h"
 #include "../build.h"
 #include "../menu.h"
 #include "../teleport.h"
@@ -99,6 +100,8 @@ sco_result BuildLoad(const sco_api* api, sco_plugin* self) {
         "Places one buildable without entering build mode; it joins the base, so undo and clear remove it", Place, place, 2);
     if (r == SCO_OK) r = api->subscribe(self, "tick", OnTick, nullptr);
     if (r != SCO_OK) return r;   // the host releases what was registered
+    // Its page of the menu (and keys), through sco.ui; the menu shell draws it (tabs.h).
+    RegisterBuiltinTab(api, self, "build.build", "Build", kTabBuild, DrawBuildTab);
     g_ticking = true;
     return SCO_OK;
 }
