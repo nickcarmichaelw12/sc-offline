@@ -19,6 +19,7 @@
 #include "services.h"
 #include "outfits.h"
 #include "menu.h"
+#include "builtins/builtins.h"
 #include "sco/app.h"
 #include "sco/caps.h"
 #include "sco/log.h"
@@ -27,6 +28,7 @@
 #include "sco/game/signatures.h"
 #include "sco_lua.h"
 #include <filesystem>
+#include <iterator>
 
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "advapi32.lib")
@@ -172,7 +174,10 @@ static void StartHostKit() {
     }
     pf.pluginsEnabled = PluginsEnabled();
     pf.scripts = &kLua;
-    // No built-ins yet: sc-offline's features become built-in plugins in Phase 4.
+    // sc-offline's features as built-in plugins (src/builtins/builtins.h), loaded before any plugin
+    // folder and with plugins on or off. Their capabilities still come from SetFeatureCaps.
+    pf.builtins = kBuiltins;
+    pf.nBuiltins = std::size(kBuiltins);
     // image stays nullptr: the features resolve their addresses in DllMain (StartOffline), before
     // this thread exists, so the signature rows were resolved there and reported by LogStartup.
     pf.setCapabilities = SetFeatureCaps;
@@ -188,15 +193,7 @@ static void StopHostKit() {
     sco::app::Stop();
 }
 
-static void OnMainThreadTick() {
-    static bool hostKitStarted = false;
-    if (!hostKitStarted) { hostKitStarted = true; StartHostKit(); }
-
-    static DWORD last = 0;
-    const DWORD now = GetTickCount();
-    if (now - last < 100) return;
-    last = now;
-
+static void RunFeatureTicks(DWORD now) {
     ProcessShipMenu(now);
     ProcessLoadout();
     ProcessNpcs();
@@ -209,6 +206,20 @@ static void OnMainThreadTick() {
     ProcessOutfits();
     TeleportTick(now);
     ProcessTravel(now);
+}
+
+static void OnMainThreadTick() {
+    static bool hostKitStarted = false;
+    if (!hostKitStarted) { hostKitStarted = true; StartHostKit(); }
+
+    static DWORD last = 0;
+    const DWORD now = GetTickCount();
+    if (now - last < 100) return;
+    last = now;
+
+    // Every feature below reads teleport's entity system, and none of them ran before this hook
+    // started without teleport; the host kit's Tick runs either way.
+    if (g_tp.ok) RunFeatureTicks(now);
     sco::app::Tick(now);   // plugin tasks, then "tick"
 }
 
@@ -234,13 +245,16 @@ static BOOL CALLBACK FindGameWindow(HWND hwnd, LPARAM out) {
     return TRUE;
 }
 
+// The message hook is the bootstrap's, not teleport's: it starts the host kit (and with it the
+// built-in plugins and plugins) on its first tick whether or not a feature resolved. It stays off
+// only when the game is running online.
 static void RunMainThreadService() {
-    if (!g_tp.ok) return;
-    LoadSavedSpot(StartingOverDaymar());
+    if (!g_offline) return;
+    if (g_tp.ok) LoadSavedSpot(StartingOverDaymar());
     HWND hwnd = nullptr;
     while (!hwnd) { EnumWindows(FindGameWindow, reinterpret_cast<LPARAM>(&hwnd)); if (!hwnd) Sleep(1000); }
     g_msgHook = SetWindowsHookExW(WH_GETMESSAGE, GetMsgProc, nullptr, GetWindowThreadProcessId(hwnd, nullptr));
-    if (!g_msgHook) { Log("[tp] could not hook the game's message loop (%lu); hotkeys disabled", GetLastError()); return; }
+    if (!g_msgHook) { Log("[app] could not hook the game's message loop (%lu); hotkeys, menu and plugins disabled", GetLastError()); return; }
     if (SpawnerReady()) Menu_Start(hwnd);
     for (;;) { PostMessageW(hwnd, WM_NULL, 0, 0); Sleep(200); }
 }
