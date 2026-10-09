@@ -512,10 +512,11 @@ void ProcessBuild() {
         }
     }
 
-    static bool f6, lmb, r, closer, farther, back;
+    // F6 is the build built-in's hotkey (build.toggle through sco.ui), which sets g_ui.toggle. The
+    // keys below are build mode's own, reserved for the product (hotkeys.h).
+    static bool lmb, r, closer, farther, back;
     const bool keys = GameWindowInFront();
-    const bool toggleKey = Pressed(VK_F6, f6, keys);
-    if (InterlockedExchange(&g_ui.toggle, 0) != 0 || toggleKey) { if (g_active) Exit(); else Enter(); }
+    if (InterlockedExchange(&g_ui.toggle, 0) != 0) { if (g_active) Exit(); else Enter(); }
     const bool undoKey = Pressed(VK_BACK, back, keys && g_active);
     if (InterlockedExchange(&g_ui.undo, 0) != 0 || undoKey) Undo();
     if (InterlockedExchange(&g_ui.clear, 0)) Clear();

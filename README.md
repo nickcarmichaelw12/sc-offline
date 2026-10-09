@@ -115,7 +115,7 @@ What's in each menu tab: [docs/features.md](docs/features.md).
 
 ## Update
 
-The launcher checks for a newer release each time you play (it gives up after 3 seconds if you're offline) and asks before changing anything. Say `y` and it downloads the release zip (Windows asks for administrator rights only if the folder is under Program Files), checks it against the SHA-256 that GitHub publishes, replaces the program files, keeps your saves (`wallet.txt`, saved places, bookmarks) and your `sc-offline.ini`, and restarts itself. If anything goes wrong, it puts the old files back.
+The launcher checks for a newer release each time you play (it gives up after 3 seconds if you're offline) and asks before changing anything. Say `y` and it downloads the release zip (Windows asks for administrator rights only if the folder is under Program Files), checks it against the SHA-256 that GitHub publishes, replaces the program files, keeps your saves (`data\storage\`, `wallet.txt`, saved places, bookmarks) and your `sc-offline.ini`, and restarts itself. If anything goes wrong, it puts the old files back.
 
 To check on demand, run `sc-offline.exe update`. To turn the check off, set `check_updates = off` in `sc-offline.ini`.
 
@@ -123,7 +123,7 @@ To check on demand, run `sc-offline.exe update`. To turn the check off, set `che
 <summary><b>Updating by hand</b></summary>
 
 1. Close the game.
-2. Copy `wallet.txt`, `spawn.txt`, `bookmarks.txt` and `locations_found.txt` out of the old `data` folder, and `sc-offline.ini` if you changed it.
+2. Copy the `storage` folder, `wallet.txt`, `spawn.txt`, `bookmarks.txt` and `locations_found.txt` out of the old `data` folder, and `sc-offline.ini` if you changed it.
 3. Delete the old folder, then extract the new zip.
 4. Put those files back in the new folder.
 </details>
@@ -182,7 +182,7 @@ That's expected until the mod is updated for the new game version.
 
 ## How it's built
 
-sc-offline is the game-specific bootstrap: it loads as `dinput8.dll`, applies the offline patches, hooks the game's main thread and draws the menu. Underneath it runs on [sco-core](https://github.com/scubamount/sco-core)'s host kit, which brings the signature scanner, the plugin loader and the plugin API. sc-offline's own features are becoming built-in plugins one at a time, on the same API that plugins made with the [sco SDK](https://github.com/scubamount/sco-core/blob/main/sdk/README.md) use. Teleport (F7/F8) was the first and the ship spawner the second; the spawner also offers other plugins a service to spawn entities near you. All of sc-offline's detours go through sco-core's one patcher. Building from source: [docs/build.md](docs/build.md).
+sc-offline is the game-specific bootstrap: it loads as `dinput8.dll`, applies the offline patches, hooks the game's main thread and draws the menu. Underneath it runs on [sco-core](https://github.com/scubamount/sco-core)'s host kit, which brings the signature scanner, the plugin loader and the plugin API. sc-offline's own features are built-in plugins, on the same API that plugins made with the [sco SDK](https://github.com/scubamount/sco-core/blob/main/sdk/README.md) use. There are nine: teleport (F7/F8), the ship spawner, crew & seats, loadout (gear and outfits), NPCs, infinite ammo, quantum travel, build mode (F6) and contracts, each with its own commands and per-tick work; the spawner also offers other plugins a service to spawn entities near you. The menu still calls the features directly, and the Squadron 42 settings (`cvars.cpp`) and `missions.cpp` still run from the bootstrap. All of sc-offline's detours go through sco-core's one patcher. Building from source: [docs/build.md](docs/build.md).
 
 ## More docs
 

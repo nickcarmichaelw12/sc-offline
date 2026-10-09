@@ -1,5 +1,6 @@
 #include "teleport.h"
 #include "menu.h"
+#include "builtins/builtin_store.h"
 #include "sco/game/teleport.h"
 #include "sco/signatures.h"
 #include <cmath>
@@ -251,6 +252,38 @@ static bool SpotFilePath(char* path, DWORD n) {
     return len > 0 && len < n;
 }
 
+// One "spot x y z zone" line into s (when it parses, fits and, with checkPosition, is in range).
+static void AddSpotLine(const char* line, Spot& s, bool checkPosition) {
+    if (s.n >= kMaxZoneDepth) return;
+    ZoneSpot& e = s.z[s.n];
+    if (sscanf_s(line, "spot %lf %lf %lf %95[^\r\n]", &e.local[0], &e.local[1], &e.local[2],  // secret-scan: allow e.local is a struct member, not a hostname
+                 e.name, static_cast<unsigned>(sizeof(e.name))) == 4 && (!checkPosition || PositionLooksValid(e.local)))
+        ++s.n;
+}
+
+void SpotToText(const Spot& s, std::string& out) {
+    out.clear();
+    char line[256];
+    for (int i = 0; i < s.n; ++i) {
+        snprintf(line, sizeof(line), "spot %.6f %.6f %.6f %s\n", s.z[i].local[0], s.z[i].local[1], s.z[i].local[2], s.z[i].name);
+        out += line;
+    }
+}
+
+int SpotFromText(const char* text, Spot& s, bool checkPosition) {
+    s = Spot{};
+    char line[256];
+    while (*text) {
+        const size_t len = strcspn(text, "\n");
+        const size_t n = len < sizeof(line) - 1 ? len : sizeof(line) - 1;
+        memcpy(line, text, n);
+        line[n] = 0;
+        AddSpotLine(line, s, checkPosition);
+        text += len + (text[len] ? 1 : 0);
+    }
+    return s.n;
+}
+
 static bool LoadSpot(Spot& s, bool& oldFormat) {
     s.n = 0;
     oldFormat = false;
@@ -261,10 +294,7 @@ static bool LoadSpot(Spot& s, bool& oldFormat) {
     char line[256];
     while (s.n < kMaxZoneDepth && fgets(line, sizeof(line), f)) {
         if (strncmp(line, "zone=", 5) == 0) { oldFormat = true; continue; }
-        ZoneSpot& e = s.z[s.n];
-        if (sscanf_s(line, "spot %lf %lf %lf %95[^\r\n]", &e.local[0], &e.local[1], &e.local[2],
-                     e.name, static_cast<unsigned>(sizeof(e.name))) == 4 && PositionLooksValid(e.local))
-            ++s.n;
+        AddSpotLine(line, s, true);
     }
     fclose(f);
     return s.n > 0;
@@ -275,11 +305,31 @@ static bool SaveSpot(const Spot& s) {
     if (!SpotFilePath(path, sizeof(path))) return false;
     FILE* f = _fsopen(path, "w", _SH_DENYNO);
     if (!f) return false;
-    fprintf(f, "# starcitzenofflinemods spawn spot (F7). Position in each zone, innermost first.\n");
-    for (int i = 0; i < s.n; ++i)
-        fprintf(f, "spot %.6f %.6f %.6f %s\n", s.z[i].local[0], s.z[i].local[1], s.z[i].local[2], s.z[i].name);
+    std::string text;
+    SpotToText(s, text);
+    fprintf(f, "# starcitzenofflinemods spawn spot (F7). Position in each zone, innermost first.\n%s", text.c_str());
     fclose(f);
     return true;
+}
+
+// The spot in the teleport built-in's storage (data/storage/teleport.db): key "spot", spawn.txt's
+// lines as text. "spawn.txt.time" is spawn.txt's last-write time when it was imported
+// (builtins/builtin_store.h has the rule). spawn.txt is no longer written while storage works.
+constexpr const char* kSpotKey = "spot";
+constexpr const char* kSpotTimeKey = "spawn.txt.time";
+
+// Both keys in one transaction; fileTime 0 leaves the recorded time as it is.
+static bool StoreSpot(const Spot& s, int64_t fileTime) {
+    BuiltinStore& st = g_teleportStore;
+    std::string text;
+    SpotToText(s, text);
+    sco::sdk::StorageTransaction tx(st.S());
+    sco_result r = tx.Result();
+    if (r == SCO_OK) r = st.S().Put(kSpotKey, text);
+    if (r == SCO_OK && fileTime) r = st.PutInt(kSpotTimeKey, fileTime);
+    if (r == SCO_OK) r = tx.Commit();
+    if (r != SCO_OK) st.Failed("saving the spot", r, "using spawn.txt");
+    return r == SCO_OK;
 }
 
 static void DescribeChain(const Spot& s, char* out, size_t n) {
@@ -293,14 +343,6 @@ static void DescribeChain(const Spot& s, char* out, size_t n) {
 static Spot  g_spot;
 static bool  g_autoTeleportPending = false;
 static DWORD g_playerReadySince = 0;
-static bool  g_keyWasDown[2] = {};
-
-static bool KeyPressed(int vk, bool& wasDown) {
-    const bool down = (GetAsyncKeyState(vk) & 0x8000) != 0;
-    const bool pressed = down && !wasDown;
-    wasDown = down;
-    return pressed;
-}
 
 static Spot  g_refineSpot;     // the spot being refined (F8's or a bookmark's)
 static int   g_refineLevel = 0;
@@ -334,7 +376,8 @@ bool SaveSpotHere(const char* why, char* reply, size_t n) {
         snprintf(reply, n, "Couldn't save the spot: %s", err);
         return false;
     }
-    if (!SaveSpot(s)) {
+    const bool stored = g_teleportStore && StoreSpot(s, 0);
+    if (!stored && !SaveSpot(s)) {
         Log("[tp] %s: could not write the spawn file (SC_OFFLINE_SPAWN_FILE)", why);
         snprintf(reply, n, "Couldn't write the spawn file (SC_OFFLINE_SPAWN_FILE)");
         return false;
@@ -342,8 +385,8 @@ bool SaveSpotHere(const char* why, char* reply, size_t n) {
     g_spot = s;
     char chain[512];
     DescribeChain(s, chain, sizeof(chain));
-    Log("[tp] %s saved spot: '%s' pos (%.2f, %.2f, %.2f) m; zones: %s", why, s.z[0].name,
-        s.z[0].local[0], s.z[0].local[1], s.z[0].local[2], chain);
+    Log("[tp] %s saved spot: '%s' pos (%.2f, %.2f, %.2f) m; zones: %s; in %s", why, s.z[0].name,
+        s.z[0].local[0], s.z[0].local[1], s.z[0].local[2], chain, stored ? "storage" : "spawn.txt");
     snprintf(reply, n, "Saved spot: '%s' pos (%.2f, %.2f, %.2f) m; zones: %s", s.z[0].name,
              s.z[0].local[0], s.z[0].local[1], s.z[0].local[2], chain);
     return true;
@@ -441,14 +484,48 @@ const char* TeleportIntoZone(uintptr_t zone, const double local[3]) {
     }
 }
 
+static bool g_spotLoadPending = false;   // LoadSavedSpot ran; the first TeleportTick loads the spot
+static bool g_startingOverDaymar = false;
+
+// Called before the host kit starts, so the built-in's storage isn't open yet: the spot is loaded
+// on the first TeleportTick, after the teleport built-in has loaded (or failed to).
 void LoadSavedSpot(bool startingOverDaymar) {
+    g_startingOverDaymar = startingOverDaymar;
+    g_spotLoadPending = true;
+}
+
+// spawn.txt, then storage: a spawn.txt storage hasn't seen is imported; otherwise storage's spot
+// is the saved one. Without storage, spawn.txt as before.
+static void LoadSpotNow() {
     bool oldFormat = false;
-    if (LoadSpot(g_spot, oldFormat)) {
+    Spot file;
+    const bool haveFile = LoadSpot(file, oldFormat);
+    g_spot = file;
+    const char* from = "spawn.txt";
+    BuiltinStore& st = g_teleportStore;
+    if (st) {
+        char path[MAX_PATH];
+        const int64_t fileTime = SpotFilePath(path, sizeof(path)) ? FileWriteTime(path) : 0;
+        int64_t seen = 0;
+        const sco_result rs = st.GetInt(kSpotTimeKey, seen);
+        if (haveFile && (rs != SCO_OK || seen != fileTime)) {
+            if (StoreSpot(file, fileTime))
+                Log("[storage] imported spawn.txt into teleport%s", rs == SCO_OK ? " (spawn.txt changed since the last import)" : "");
+        } else {
+            std::string text;
+            const sco_result r = st.S().Get(kSpotKey, text);
+            Spot stored;
+            if (r == SCO_OK && SpotFromText(text.c_str(), stored, true)) { g_spot = stored; from = "storage"; }
+            else if (r != SCO_OK && r != SCO_NOT_FOUND) st.Failed("reading the spot", r, "using spawn.txt");
+        }
+    }
+    const bool startingOverDaymar = g_startingOverDaymar;
+    if (g_spot.n) {
         g_autoTeleportPending = true;
         char chain[512];
         DescribeChain(g_spot, chain, sizeof(chain));
-        Log("[tp] saved spot loaded ('%s'; zones: %s); will teleport there after spawning. F7 = save new spot, F8 = go there now",
-            g_spot.z[0].name, chain);
+        Log("[tp] saved spot loaded from %s ('%s'; zones: %s); will teleport there after spawning. F7 = save new spot, F8 = go there now",
+            from, g_spot.z[0].name, chain);
     } else if (oldFormat) {
         Log("[tp] saved spot is from an older version and can't be used after a relaunch: stand there and press F7 once more");
     } else {
@@ -461,10 +538,11 @@ void LoadSavedSpot(bool startingOverDaymar) {
 }
 
 void TeleportTick(DWORD now) {
-    const bool focus = GameHasFocus();
-    if (KeyPressed(VK_F7, g_keyWasDown[0]) && focus) TeleportSaveHotkey();
-    if (KeyPressed(VK_F8, g_keyWasDown[1]) && focus) TeleportGoHotkey();
-
+    if (g_spotLoadPending) {
+        g_spotLoadPending = false;
+        LoadSpotNow();
+    }
+    // F7 and F8 are the teleport built-in's hotkeys (sco.ui), dispatched by hotkeys.cpp.
     if (g_autoTeleportPending) {
         uintptr_t actor, entity;
         bool ready = false;

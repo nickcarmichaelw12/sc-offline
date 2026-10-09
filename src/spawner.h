@@ -7,6 +7,7 @@ void ReadStartOptions();
 bool StartingOverDaymar();
 bool PluginsEnabled();   // plugins = on (SC_OFFLINE_PLUGINS); read by ReadStartOptions
 void ProcessShipMenu(DWORD now);
+void ProcessCrew(DWORD now);   // seat actions, crew jobs, the seat list (the crew built-in's tick)
 
 // Squadron 42 tab: spawn an entity class the menu's ship list doesn't carry.
 // enemyWing also spawns the Vanduul AI wing next to it (the "Bengal + Vanduul wing" row).

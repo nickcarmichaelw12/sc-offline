@@ -1,152 +1,200 @@
 #include "quantum.h"
 #include "hooks.h"
 #include "teleport.h"
-#include "dcb_patch.h"
+#include "version.h"
+#include "sco/caps.h"
+#include "sco/datacore.h"
+#include "sco/datacore_service.h"
+#include "sco/game/pak.h"
+#include "sco/plugins.h"
+#include "sco/vfs.h"
+#include <atomic>
+#include <cstring>
+#include <filesystem>
+#include <mutex>
+#include <new>
+#include <string>
+#include <system_error>
+#include <vector>
 
-using LoadDataCoreFn = uintptr_t(__fastcall*)(uintptr_t loader, uintptr_t path, uintptr_t a3, uintptr_t a4, uintptr_t a5);
-using PakOpenFn  = uintptr_t(__fastcall*)(uintptr_t pak, const char* path, const char* mode, uint32_t flags);
-using PakReadFn  = size_t(__fastcall*)(uintptr_t pak, void* data, size_t length, size_t elems, uintptr_t file, const void* tag);
-using PakSeekFn  = int(__fastcall*)(uintptr_t pak, uintptr_t file, int offset, int mode);
-using PakCloseFn = int(__fastcall*)(uintptr_t pak, uintptr_t file);
-constexpr size_t kPakOpen = 0x148, kPakRead = 0x160, kPakSeek = 0x1D0, kPakClose = 0x1E0;
+// The new quantum drive's game data: sc-offline's built-in data pack,
+// data/builtin/quantum/datacore/quantum_drive.toml. It names records and fields, not bytes, so it
+// keeps applying across game patches while they exist (design decision 11: made once with
+// `sco-dcb diff`, edited by hand since). A sco::vfs mount on Game2.dcb runs sco-core's pack loader
+// (sco::datacore::service::Load) when the DataCore loader opens the file: the file is read through
+// the engine's own CryPak reads, parsed, the pack applied, and the splices go back to sco::vfs.
+// sco::game::pak serves the result to the loader. A pack that doesn't apply leaves the mount
+// inert and the game loads its own bytes.
+static constexpr const char* kPackOwner = "quantum";       // the built-in the pack belongs to
+static constexpr const char* kPackName = "quantum_drive";  // datacore/quantum_drive.toml
+static sco::vfs::MountTable  g_dcbMounts;
+static std::filesystem::path g_packDir;   // data/builtin/quantum; set before sco::game::pak::Enable
+static bool                  g_pakEnabled = false;
+static const char*           g_notHooked = "see [pak] above";
+static std::atomic<int>      g_dataPatched{ -1 };  // -1 no load yet, 0 loaded without the drive, 1 patched
 
-static LoadDataCoreFn g_loadDataCoreOrig = nullptr;
-static uintptr_t*     g_cryPak = nullptr;
-static bool           g_pakCalls = false, g_hooked = false;
+// What the pack did at the last load: written by ApplyDrivePack, read by ReportDataLoad (both on
+// the loader's thread, one after the other; the lock keeps it simple).
+struct PackOutcome {
+    bool        ran = false, applied = false;
+    size_t      ops = 0;       // patcher operations applied
+    std::string reason;        // why it didn't apply: the pack loader's first failure
+};
+static std::mutex  g_packLock;
+static PackOutcome g_pack;
 
-static struct {
-    PakOpenFn  open;  PakReadFn  read;
-    PakSeekFn  seek;  PakCloseFn close;
-    DWORD      thread;
-    uintptr_t  file;
-    int        state;
-    uint64_t   pos, real;
-} g_dcb;
+// Records the outcome; the mount's result is its reason (empty when the pack applied).
+static sco::vfs::Result Finish(PackOutcome&& o) {
+    sco::vfs::Result r{ o.applied ? std::string() : o.reason };
+    std::lock_guard<std::mutex> hold(g_packLock);
+    g_pack = std::move(o);
+    return r;
+}
 
-struct DcbRun { uint64_t start, len, orig; const uint8_t* bytes; };
-static DcbRun g_runs[2 * _countof(dcbpatch::kEdits) + 1];
-static int    g_runCount = 0;
-
-static void BuildRuns() {
-    uint64_t o = 0, p = 0;
-    g_runCount = 0;
-    for (const dcbpatch::Edit& e : dcbpatch::kEdits) {
-        if (e.at > o) { g_runs[g_runCount++] = { p, e.at - o, o, nullptr }; p += e.at - o; o = e.at; }
-        if (e.added)  { g_runs[g_runCount++] = { p, e.added, 0, e.bytes }; p += e.added; }
-        o += e.removed;
+// The mount's producer (sco::vfs::Transform), run once when the loader opens Game2.dcb.
+static sco::vfs::Result ApplyDrivePack(sco::vfs::BaseIo& base, uint64_t baseSize, std::vector<sco::vfs::Splice>& out) {
+    PackOutcome o;
+    o.ran = true;
+    std::vector<uint8_t> file;
+    try {
+        file.resize(static_cast<size_t>(baseSize));
+    } catch (const std::bad_alloc&) {
+        o.reason = "no memory to read Game2.dcb";
+        return Finish(std::move(o));
     }
-    g_runs[g_runCount++] = { p, dcbpatch::kOrigSize - o, o, nullptr };
-}
-
-static const void* ReadTag() {
-    static const char* const sealed = "bool __cdecl CDataCoreLoader::InitializeBinary(const class CryStringT<char> &,bool)";
-    static const char* const open = sealed;
-    static const char* const name = open;
-    return &name;
-}
-
-static size_t ReadPatched(uintptr_t pak, uint8_t* out, size_t n, const void* name) {
-    size_t done = 0;
-    for (int i = 0; i < g_runCount && done < n; ++i) {
-        const DcbRun& r = g_runs[i];
-        if (g_dcb.pos >= r.start + r.len) continue;
-        const uint64_t into = g_dcb.pos - r.start;
-        const size_t k = r.len - into < n - done ? static_cast<size_t>(r.len - into) : n - done;
-        if (r.bytes) {
-            memcpy(out + done, r.bytes + into, k);
-        } else {
-            const uint64_t at = r.orig + into;
-            if (g_dcb.real != at) g_dcb.seek(pak, g_dcb.file, static_cast<int>(at), SEEK_SET);
-            const size_t got = g_dcb.read(pak, out + done, 1, k, g_dcb.file, name);
-            g_dcb.real = at + got;
-            if (got != k) { done += got; g_dcb.pos += got; break; }
+    size_t got = 0;
+    if (base.Seek(0))
+        while (got < file.size()) {
+            const size_t n = base.Read(file.data() + got, file.size() - got);
+            if (n == 0) break;
+            got += n;
         }
-        done += k;
-        g_dcb.pos += k;
+    if (got != file.size()) {
+        o.reason = "Game2.dcb couldn't be read";
+        return Finish(std::move(o));
     }
-    return done;
-}
-
-static bool IsPatchable(uintptr_t pak, uintptr_t file) {
-    uint8_t buf[sizeof(dcbpatch::kOrigHeader)];
-    bool same = g_dcb.read(pak, buf, 1, sizeof(buf), file, ReadTag()) == sizeof(buf)
-             && !memcmp(buf, dcbpatch::kOrigHeader, sizeof(buf));
-    for (const dcbpatch::Edit& e : dcbpatch::kEdits)
-        if (same && e.removed)
-            same = e.removed <= sizeof(buf) && g_dcb.seek(pak, file, static_cast<int>(e.at), SEEK_SET) == 0
-                && g_dcb.read(pak, buf, 1, e.removed, file, ReadTag()) == e.removed && !memcmp(buf, e.old, e.removed);
-    g_dcb.seek(pak, file, 0, SEEK_SET);
-    return same;
-}
-
-static uintptr_t __fastcall PakOpenHook(uintptr_t pak, const char* path, const char* mode, uint32_t flags) {
-    const uintptr_t file = g_dcb.open(pak, path, mode, flags);
-    const size_t n = path ? strlen(path) : 0;
-    if (file && !g_dcb.file && GetCurrentThreadId() == g_dcb.thread && n > 4 && !_stricmp(path + n - 4, ".dcb")) {
-        g_dcb.file = file;
-        g_dcb.pos = g_dcb.real = 0;
-        g_dcb.state = IsPatchable(pak, file) ? 1 : -1;
+    sco::datacore::Schema schema;
+    if (!schema.Parse(file)) {
+        o.reason = "Game2.dcb's layout was refused: " + schema.error;
+        return Finish(std::move(o));
     }
-    return file;
-}
-
-static size_t __fastcall PakReadHook(uintptr_t pak, void* data, size_t length, size_t elems, uintptr_t file, const void* tag) {
-    if (!file || file != g_dcb.file || g_dcb.state != 1) return g_dcb.read(pak, data, length, elems, file, tag);
-    return length ? ReadPatched(pak, static_cast<uint8_t*>(data), length * elems, tag ? tag : ReadTag()) / length : 0;
-}
-
-static int __fastcall PakSeekHook(uintptr_t pak, uintptr_t file, int offset, int mode) {
-    if (!file || file != g_dcb.file || g_dcb.state != 1) return g_dcb.seek(pak, file, offset, mode);
-    const int64_t base = mode == SEEK_SET ? 0 : mode == SEEK_CUR ? static_cast<int64_t>(g_dcb.pos) : dcbpatch::kPatchedSize;
-    if (mode < SEEK_SET || mode > SEEK_END || base + offset < 0) return -1;
-    g_dcb.pos = static_cast<uint64_t>(base + offset);
-    return 0;
-}
-
-static int __fastcall PakCloseHook(uintptr_t pak, uintptr_t file) {
-    if (file && file == g_dcb.file) g_dcb.file = 0;
-    return g_dcb.close(pak, file);
-}
-
-static bool SwapPakSlots(bool on) {
-    const uintptr_t pak = g_cryPak ? *g_cryPak : 0;
-    if (!pak) return false;
-    void** const vt = reinterpret_cast<void**>(Rd<uintptr_t>(pak));
-    if (on && !g_dcb.open) {
-        g_dcb.open  = reinterpret_cast<PakOpenFn>(vt[kPakOpen / 8]);
-        g_dcb.read  = reinterpret_cast<PakReadFn>(vt[kPakRead / 8]);
-        g_dcb.seek  = reinterpret_cast<PakSeekFn>(vt[kPakSeek / 8]);
-        g_dcb.close = reinterpret_cast<PakCloseFn>(vt[kPakClose / 8]);
+    // Built-ins have no plugin folder, so the pack loader gets the quantum built-in's pack as a
+    // data-pack entry of its own, first in plugin order. No dataRoot: sc-offline doesn't run the
+    // sco.datacore service, so there are no saved patches to read.
+    std::vector<sco::plugins::Plugin> list(1);
+    sco::plugins::Plugin& p = list[0];
+    p.dir = g_packDir;
+    p.folder = kPackOwner;
+    p.manifest.id = kPackOwner;
+    p.manifest.name = "quantum drive data";
+    p.manifest.version = SCO_VERSION;
+    p.manifest.kind = sco::plugins::Kind::Data;
+    p.manifestOk = true;
+    p.state = sco::plugins::State::Ready;
+    sco::plugins::ContentIndex index;
+    index.Build(list);
+    const sco::datacore::service::LoadResult loaded = sco::datacore::service::Load(schema, list, index, {});
+    const sco::datacore::PackReport* rep = nullptr;
+    for (const sco::datacore::PackReport& r : loaded.result.packs)
+        if (r.plugin == kPackOwner) rep = &r;   // the built-in's one file
+    if (!rep) {
+        o.reason = list[0].state == sco::plugins::State::Refused
+                       ? list[0].reason
+                       : (g_packDir / "datacore" / (std::string(kPackName) + ".toml")).string() + " is missing";
+        return Finish(std::move(o));
     }
-    DWORD old;
-    if (!VirtualProtect(vt + kPakOpen / 8, kPakClose - kPakOpen + 8, PAGE_READWRITE, &old)) return false;
-    vt[kPakOpen / 8]  = on ? reinterpret_cast<void*>(&PakOpenHook)  : reinterpret_cast<void*>(g_dcb.open);
-    vt[kPakRead / 8]  = on ? reinterpret_cast<void*>(&PakReadHook)  : reinterpret_cast<void*>(g_dcb.read);
-    vt[kPakSeek / 8]  = on ? reinterpret_cast<void*>(&PakSeekHook)  : reinterpret_cast<void*>(g_dcb.seek);
-    vt[kPakClose / 8] = on ? reinterpret_cast<void*>(&PakCloseHook) : reinterpret_cast<void*>(g_dcb.close);
-    VirtualProtect(vt + kPakOpen / 8, kPakClose - kPakOpen + 8, old, &old);
-    return true;
+    if (rep->state != sco::datacore::PackState::Applied || !loaded.result.status) {
+        o.reason = !rep->reason.empty() ? rep->reason : loaded.result.status.message;
+        for (const sco::datacore::PackOpReport& op : rep->ops)   // the first refusal names the record and field
+            if (!op.status) {
+                o.reason = "line " + std::to_string(op.line) + ": " + op.status.message + " (" +
+                           sco::datacore::RefusalName(op.status.category) + ")";
+                break;
+            }
+        return Finish(std::move(o));
+    }
+    o.applied = true;
+    o.ops = rep->applied;
+    out = loaded.result.splices;
+    return Finish(std::move(o));
 }
 
-static uintptr_t __fastcall LoadDataCoreHook(uintptr_t loader, uintptr_t path, uintptr_t a3, uintptr_t a4, uintptr_t a5) {
-    g_dcb.thread = GetCurrentThreadId();
-    g_dcb.state = 0;
-    const bool swapped = SwapPakSlots(true);
-    const uintptr_t ok = g_loadDataCoreOrig(loader, path, a3, a4, a5);
-    if (swapped) SwapPakSlots(false);
-    g_dcb.thread = 0;
-    g_dcb.file = 0;
-    const char* const result = (ok & 0xFF) ? "ok" : "FAILED";
-    if (!swapped)
-        Log("[!] new quantum drive: CryPak not found; game data loaded %s without the new drive", result);
-    else if (g_dcb.state == 1)
-        Log("[+] new quantum drive: game data patched as it loaded (%d edits, %u -> %u bytes; the Gladius gets the new drive), load %s",
-            static_cast<int>(_countof(dcbpatch::kEdits)), dcbpatch::kOrigSize, dcbpatch::kPatchedSize, result);
-    else if (g_dcb.state == -1)
-        Log("[!] new quantum drive: Game2.dcb isn't the 4.10.0 one the patch was made for (game updated?); loaded %s without the new drive", result);
-    else
-        Log("[!] new quantum drive: the loader opened no .dcb; game data loaded %s without the new drive", result);
-    return ok;
+static std::shared_ptr<const sco::vfs::Table> BuildDriveMount() {
+    sco::vfs::Mount m;
+    m.path = "Data/Game2.dcb";
+    m.source = kPackName;
+    m.producer = sco::vfs::Transform(ApplyDrivePack);
+    std::vector<sco::vfs::Mount> mounts;
+    mounts.push_back(std::move(m));
+    return sco::vfs::Table::Build(std::move(mounts));
+}
+
+static std::shared_ptr<const sco::vfs::Table> DriveMounts() { return g_dcbMounts.Current(); }
+
+// After each DataCore load: sco::game::pak's report and the pack's, in the feature's words.
+// sco-core calls it on the loader's thread after releasing its lock.
+static void ReportDataLoad(const sco::game::pak::LoadReport& r) {
+    const char* ok = r.loaderOk ? "ok" : "FAILED";
+    const unsigned long long ms = static_cast<unsigned long long>(r.durationMs);
+    PackOutcome pack;
+    {
+        std::lock_guard<std::mutex> hold(g_packLock);
+        pack = std::move(g_pack);
+        g_pack = PackOutcome();
+    }
+    const bool patched = r.outcome == sco::game::pak::Outcome::Applied && pack.applied;
+    switch (r.outcome) {
+    case sco::game::pak::Outcome::Applied:
+        Log("[+] new quantum drive: game data patched as it loaded (pack %s: %zu operations), load %s in %llu ms",
+            kPackName, pack.ops, ok, ms);
+        break;
+    case sco::game::pak::Outcome::Passed:
+        if (pack.ran && !pack.applied)
+            Log("[!] new quantum drive: pack %s not applied (%s); game data loaded %s in %llu ms without the new drive",
+                kPackName, pack.reason.c_str(), ok, ms);
+        else
+            Log("[!] new quantum drive: %s passed through (%s); game data loaded %s in %llu ms without the new drive",
+                r.path.c_str(), r.reason.c_str(), ok, ms);
+        break;
+    case sco::game::pak::Outcome::NoDcb:
+        Log("[!] new quantum drive: the loader opened no .dcb; game data loaded %s without the new drive", ok);
+        break;
+    case sco::game::pak::Outcome::NoCryPak:
+        Log("[!] new quantum drive: CryPak not found; game data loaded %s without the new drive", ok);
+        break;
+    case sco::game::pak::Outcome::SwapFailed:
+        Log("[!] new quantum drive: %s; game data loaded %s without the new drive", r.reason.c_str(), ok);
+        break;
+    case sco::game::pak::Outcome::None:
+        return;
+    }
+    g_dataPatched.store(patched ? 1 : 0, std::memory_order_release);
+    const sco::Result cr = sco::caps::Set("quantum.drive", patched, patched ? nullptr : "the game data wasn't patched (see mod.log)");
+    if (cr != sco::Result::Ok) Log("[!] capability quantum.drive: %s", sco::ResultName(cr));
+}
+
+void EnableQuantumDrive() {
+    char dir[MAX_PATH];
+    if (!DataFilePath(dir, sizeof(dir), "builtin")) {   // data\builtin, beside ships.txt
+        g_notHooked = "SC_OFFLINE_SHIPS_FILE is unset, so there is no data folder for the pack";
+        return;
+    }
+    std::error_code ec;
+    std::filesystem::path root = std::filesystem::absolute(dir, ec);
+    if (ec) root = dir;
+    g_packDir = root / kPackOwner;
+    std::shared_ptr<const sco::vfs::Table> table = BuildDriveMount();
+    const std::vector<sco::vfs::MountInfo> info = table->Mounts();
+    if (info.empty() || info[0].state == sco::vfs::MountState::Refused) {
+        Log("[!] new quantum drive: the pack's mount was refused (%s)", info.empty() ? "no mount" : info[0].reason.c_str());
+        g_notHooked = "the pack's mount was refused";
+        return;
+    }
+    g_dcbMounts.Publish(std::move(table));
+    sco::game::pak::Options o;
+    o.mounts = DriveMounts;
+    o.onLoad = ReportDataLoad;
+    g_pakEnabled = sco::game::pak::Enable(o) == sco::Result::Ok;
 }
 
 using OnActionFn = uintptr_t(__fastcall*)(uintptr_t handler, int action, int mode, float value, void* functor);
@@ -414,32 +462,12 @@ void ResolveQuantumApi(const Section& text, const Section& rdata) {
                                         "41 B8 17 00 00 00 48 8D 15", senders, 8);
     for (int i = 0; header && i < found && i < 8; ++i)
         if (senders[i] + 0x2C + Rel32(senders[i] + 0x28) == header) g_sendEffectTag = reinterpret_cast<SendEffectTagFn>(senders[i]);
-    const uint8_t* msg = FindCString(rdata, "DCB file is smaller than expected");
-    const uint8_t* site = msg ? FindRipLea(text, 0x4C, 0x8D, 0x0D, msg) : nullptr;
-    DWORD64 base = 0;
-    PRUNTIME_FUNCTION rf = site ? RtlLookupFunctionEntry(reinterpret_cast<DWORD64>(site), &base, nullptr) : nullptr;
-    for (int i = 0; rf && i < 8; ++i) {
-        const uint8_t* info = reinterpret_cast<const uint8_t*>(base + rf->UnwindData);
-        if (!((info[0] >> 3) & UNW_FLAG_CHAININFO)) break;
-        rf = reinterpret_cast<PRUNTIME_FUNCTION>(const_cast<uint8_t*>(info + 4 + ((info[2] + 1) & ~1) * 2));
-    }
-    uint8_t* loader = rf ? reinterpret_cast<uint8_t*>(base + rf->BeginAddress) : nullptr;
-    if (loader && !BytesMatch(loader, "48 89 5C 24 08 48 89 74 24 10 48 89 7C 24 18 55 41 54 41 55 41 56 41 57")) loader = nullptr;
-    for (int i = 0; loader && !g_cryPak && i < 0x400; ++i)
-        if (BytesMatch(loader + i, "48 8B 0D ?? ?? ?? ?? 4C 8D 05 ?? ?? ?? ?? 48 8B 55 ?? 45 33 C9 48 8B 01 FF 90 48 01 00 00"))
-            g_cryPak = reinterpret_cast<uintptr_t*>(loader + i + 7 + Rel32(loader + i + 3));
-    static const size_t kSlots[] = { kPakRead, kPakSeek, kPakClose };
-    int calls = 0;
-    for (size_t slot : kSlots)
-        for (int i = 0; loader && i < 0x2400; ++i)
-            if (loader[i] == 0xFF && loader[i + 1] == 0x90 && Rel32(loader + i + 2) == static_cast<int32_t>(slot)) { ++calls; break; }
-    g_pakCalls = calls == 3;
-    BuildRuns();
-    g_hooked = loader && g_cryPak && g_pakCalls
-        && HookFunction(loader, 15, reinterpret_cast<void*>(&LoadDataCoreHook), reinterpret_cast<void**>(&g_loadDataCoreOrig));
 }
 
-bool QuantumDriveReady() { return g_hooked; }
+bool QuantumDriveReady() {
+    const int patched = g_dataPatched.load(std::memory_order_acquire);
+    return patched < 0 ? g_pakEnabled : patched == 1;
+}
 
 bool QuantumBoostReady() {
     return g_inputHooked && g_startUseHooked && g_driveInput && g_effectGuarded && g_chargeHooked
@@ -447,9 +475,8 @@ bool QuantumBoostReady() {
 }
 
 void LogQuantum() {
-    if (QuantumDriveReady()) Log("[+] new quantum drive: game data loader hooked (the Gladius' drive data is patched in as it loads)");
-    else          Log("[!] new quantum drive: game data loader not hooked (CryPak %s, its calls %s)",
-                      g_cryPak ? "ok" : "MISSING", g_pakCalls ? "ok" : "MISSING");
+    if (g_pakEnabled) Log("[+] new quantum drive: game data loader hooked (pack %s applies as Game2.dcb loads)", kPackName);
+    else              Log("[!] new quantum drive: game data loader not hooked (%s)", g_notHooked);
     const bool audio = g_audioSystem && g_handleValid;
     if (QuantumBoostReady())
         Log("[+] quantum boost: hold Caps Lock, or NAV mode + hold left mouse");

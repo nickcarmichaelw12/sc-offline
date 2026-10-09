@@ -57,6 +57,7 @@ struct SpawnApi {
     void*             attrWriter = nullptr;
     uintptr_t*        game = nullptr;
     uintptr_t*        components = nullptr;
+    uint8_t           teamTag = 0;   // the spawn helper's own tag (mov cl, imm8 at +0x4F)
 };
 static SpawnApi g_sp;
 
@@ -98,7 +99,7 @@ bool ResolveSpawnApi(const Section& text, const Section& rdata) {
     if (!lea) { Log("[ship] spawn helpers not found; ship spawner disabled"); return false; }
     const uint8_t* f = lea - 0x59;
     if (!BytesMatch(f, "48 89 5C 24 10 4C 89 4C 24 20 56 57 41 54 41 56 41 57")
-        || !BytesMatch(f + 0x4F, "B1 40 E8") || !BytesMatch(f + 0x40C, "BA 00 10 00 00")
+        || !BytesMatch(f + 0x4F, "B1 ?? E8") || !BytesMatch(f + 0x40C, "BA 00 10 00 00")
         || !BytesMatch(f + 0x46D, "E8") || !BytesMatch(f + 0x47D, "E8") || !BytesMatch(f + 0x55C, "E8")) {
         Log("[ship] spawn helper layout changed; ship spawner disabled");
         return false;
@@ -114,6 +115,7 @@ bool ResolveSpawnApi(const Section& text, const Section& rdata) {
         Log("[ship] spawn params / seat helper not found; ship spawner disabled");
         return false;
     }
+    g_sp.teamTag      = f[0x50];
     g_sp.teamCategory = reinterpret_cast<TeamCategoryFn>(f + 0x51 + 5 + Rel32(f + 0x52));
     g_sp.setFlags     = reinterpret_cast<SpawnSetFlagsFn>(f + 0x46D + 5 + Rel32(f + 0x46E));
     g_sp.setClass     = reinterpret_cast<SpawnSetClassFn>(f + 0x47D + 5 + Rel32(f + 0x47E));
@@ -504,7 +506,7 @@ static const char* SpawnShipInZone(const char* shipClass, uint64_t zoneId, const
 
         uintptr_t batch = 0;
         VCall<void>(es, 0xC8, &batch, "starcitzenofflinemods ship spawner",
-                    static_cast<uint32_t>(g_sp.teamCategory(64)), static_cast<uint32_t>(0));
+                    static_cast<uint32_t>(g_sp.teamCategory(g_sp.teamTag)), static_cast<uint32_t>(0));
         if (!batch) return "couldn't create a spawn batch";
         uintptr_t attributes[2] = {};
         VCall<void>(es, 0x118, attributes);
@@ -1702,10 +1704,16 @@ void ProcessShipMenu(DWORD now) {
         }
     }
 
-    ProcessSeatAction(now);
     UpdateSeatJob(now);
-    UpdateCrewJobs(now);
     RunPowerJob(now);
+}
+
+// The Crew & seats panel's work: its queued seat actions (and the Vehicles tab's Power on), the
+// crew jobs, and the seat list. Run by the crew built-in's tick, after the spawner's.
+void ProcessCrew(DWORD now) {
+    if (!g_sp.ok) return;
+    ProcessSeatAction(now);
+    UpdateCrewJobs(now);
 
     // Keep the Crew & seats list live while the menu is showing it.
     static DWORD lastSeatRefresh = 0;

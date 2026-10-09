@@ -10,8 +10,9 @@
 #   dinput8     shared   src/*.cpp, src/builtins/*.cpp -> dinput8.dll
 #   sc-offline  exe      launcher/launcher.cpp -> sc-offline.exe
 #   sco-core    static   external/sco-core (submodule): scanners, signatures, host kit, plugin
-#                        loader and sco-lua; dinput8 links sco_app, sco_lua, sco_hook and
-#                        sco_engine (the zone tree behind teleport.spatial)
+#                        loader and sco-lua; dinput8 links sco_app, sco_lua, sco_hook,
+#                        sco_engine (the zone tree behind teleport.spatial) and sco_pak (the
+#                        CryPak adapter serving the quantum drive's sco::vfs mount)
 #
 # Every setting below carries over from the former src/sc-offline-dll.vcxproj and
 # launcher/sc-offline.vcxproj (Release|x64 and Debug|x64).
@@ -110,10 +111,25 @@ add_library(dinput8 SHARED
   src/services.cpp
   src/outfits.cpp
   src/menu.cpp
+  src/hotkeys.cpp
   src/travel.cpp
   # Built-in plugins (src/builtins/builtins.h).
   src/builtins/teleport_plugin.cpp
   src/builtins/spawn_plugin.cpp
+  src/builtins/crew_plugin.cpp
+  src/builtins/npc_plugin.cpp
+  src/builtins/loadout_plugin.cpp
+  src/builtins/ammo_plugin.cpp
+  src/builtins/quantum_plugin.cpp
+  src/builtins/build_plugin.cpp
+  src/builtins/contracts_plugin.cpp
+  # Their menu tabs, drawn through sco.ui (src/builtins/tabs.h).
+  src/builtins/loadout_ui.cpp
+  src/builtins/quantum_ui.cpp
+  src/builtins/spawn_ui.cpp
+  src/builtins/crew_ui.cpp
+  src/builtins/npc_ui.cpp
+  src/builtins/build_ui.cpp
   # Manifest EnableSegmentHeap.
   src/dinput8.manifest
 )
@@ -127,8 +143,8 @@ target_link_options(dinput8 PRIVATE /SUBSYSTEM:WINDOWS "$<$<CONFIG:Release>:/OPT
 # Also named by #pragma comment(lib) in dllmain.cpp and menu.cpp.
 target_link_libraries(dinput8 PRIVATE imgui d3d11 shlwapi advapi32 windowscodecs ole32)
 # The host kit (sco/app.h, with sco/scan.h, signatures, caps, the plugin loader), sco-lua, the
-# detour engine and the zone tree (sco/engine/zone.h).
-target_link_libraries(dinput8 PRIVATE sco_app sco_lua sco_hook sco_engine)
+# detour engine, the zone tree (sco/engine/zone.h) and the CryPak adapter (sco/game/pak.h, with sco_vfs).
+target_link_libraries(dinput8 PRIVATE sco_app sco_lua sco_hook sco_engine sco_pak)
 
 # WholeProgramOptimization + LinkTimeCodeGeneration in Release (/GL, /LTCG).
 set_target_properties(imgui dinput8 PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
@@ -156,3 +172,31 @@ set_target_properties(spawn_probe PROPERTIES
   LIBRARY_OUTPUT_DIRECTORY "${_probe_dir}/$<0:>"
   ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib/test-plugins")
 configure_file(tools/test-plugins/spawn_probe/plugin.ini "${_probe_dir}/plugin.ini" COPYONLY)
+
+# builtins_probe exercises the feature built-ins' commands in game (crew, npc, loadout, ammo, quantum,
+# build, contracts); same layout as spawn_probe.
+add_library(builtins_probe SHARED tools/test-plugins/builtins_probe/builtins_probe.c)
+target_include_directories(builtins_probe PRIVATE external/sco-core/include)
+target_link_libraries(builtins_probe PRIVATE user32)
+set(_bprobe_dir "${CMAKE_BINARY_DIR}/test-plugins/builtins_probe")
+set_target_properties(builtins_probe PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${_bprobe_dir}/$<0:>"
+  LIBRARY_OUTPUT_DIRECTORY "${_bprobe_dir}/$<0:>"
+  ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib/test-plugins")
+configure_file(tools/test-plugins/builtins_probe/plugin.ini "${_bprobe_dir}/plugin.ini" COPYONLY)
+
+# ui_probe exercises the menu shell and hotkeys through sco.ui: its own tab, badge and overlay, drawn
+# with ImGui the way a third-party plugin does it (src/menu_imgui.h: sc-offline's own ImGui, linked
+# in), and Ctrl+Alt+9 / Ctrl+Alt+0 bound to its commands; same layout as spawn_probe.
+add_library(ui_probe SHARED tools/test-plugins/ui_probe/ui_probe.cpp)
+target_include_directories(ui_probe PRIVATE external/sco-core/include src)
+target_compile_definitions(ui_probe PRIVATE ${SCO_COMMON_DEFINES})
+target_compile_options(ui_probe PRIVATE ${SCO_COMMON_OPTIONS} /W3)
+target_link_libraries(ui_probe PRIVATE imgui)
+set_target_properties(ui_probe PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+set(_uprobe_dir "${CMAKE_BINARY_DIR}/test-plugins/ui_probe")
+set_target_properties(ui_probe PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${_uprobe_dir}/$<0:>"
+  LIBRARY_OUTPUT_DIRECTORY "${_uprobe_dir}/$<0:>"
+  ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib/test-plugins")
+configure_file(tools/test-plugins/ui_probe/plugin.ini "${_uprobe_dir}/plugin.ini" COPYONLY)

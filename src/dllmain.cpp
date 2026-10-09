@@ -19,6 +19,7 @@
 #include "services.h"
 #include "outfits.h"
 #include "menu.h"
+#include "hotkeys.h"
 #include "builtins/builtins.h"
 #include "sco/app.h"
 #include "sco/caps.h"
@@ -102,6 +103,7 @@ static bool AntiCheatPresent() {
 
 static bool g_offline = false;
 static bool g_outfitsOk = false;
+static bool g_buildOk = false;   // the free camera build mode uses
 static bool g_signaturesResolved = false;
 static const char* g_quitHookStatus = nullptr;   // "[app] game quit hook: ..." in LogStartup
 
@@ -117,12 +119,13 @@ static void StartOffline() {
     if (!sco::game::RegisterGameSignatures()) Log("[!] sco-core's game signature tables did not all register");
     sco::ResolveAll(sco::ModuleImage());
     g_signaturesResolved = true;
+    EnableQuantumDrive();   // the pak.* rows: the new quantum drive's game data, served as it loads
     InstallQuitHook();
     if (ResolveTeleportApi()) {
         ResolveSpawnApi(g_text, g_rdata);
         g_outfitsOk = ResolveLoadoutApi(g_text, g_rdata);  // outfits ride the gear menu's loader
         ResolveNpcApi(g_text);
-        ResolveBuildApi(g_text, g_rdata);
+        g_buildOk = ResolveBuildApi(g_text, g_rdata);
         ResolveCVarsApi(g_text, g_rdata);
         ResolveMissionsApi(g_text, g_rdata);
         ResolveContractsApi(g_text, g_rdata);
@@ -161,9 +164,16 @@ static void SetFeatureCaps() {
     SetCap("offline", g_offline);
     SetCap("teleport", g_tp.ok);
     SetCap("spawn.ship", SpawnerReady());
+    SetCap("crew", Menu_SeatControlAvailable());
+    SetCap("npc", SpawnerReady());
     SetCap("outfits", g_outfitsOk);
+    SetCap("loadout", g_outfitsOk);   // the gear menu's loader, which outfits ride
+    SetCap("ammo", AmmoReady());
     SetCap("quantum.drive", QuantumDriveReady());
     SetCap("quantum.boost", QuantumBoostReady());
+    SetCap("quantum", g_tp.ok);   // the Travel tab's requests all go through teleport
+    SetCap("build", g_buildOk && SpawnerReady());
+    SetCap("contracts", ContractsReady());
 }
 
 static const sco::plugins::ScriptRuntime kLua{ sco_lua_load, sco_lua_unload };
@@ -178,8 +188,10 @@ static void StartHostKit() {
         std::error_code ec;
         pf.pluginRoot = std::filesystem::absolute(dir, ec);
         if (ec) pf.pluginRoot = dir;
+        // sco.storage: every plugin's database, the built-ins' included, in data\storage\<id>.db.
+        pf.dataRoot = pf.pluginRoot.parent_path();
     } else {
-        Log("[app] SC_OFFLINE_SHIPS_FILE is unset, so there is no data folder to load plugins from");
+        Log("[app] SC_OFFLINE_SHIPS_FILE is unset, so there is no data folder to load plugins from or keep storage in");
     }
     pf.pluginsEnabled = PluginsEnabled();
     pf.scripts = &kLua;
@@ -190,6 +202,10 @@ static void StartHostKit() {
     // image stays nullptr: the features resolve their addresses in DllMain (StartOffline), before
     // this thread exists, so the signature rows were resolved there and reported by LogStartup.
     pf.setCapabilities = SetFeatureCaps;
+    // The keys sc-offline handles itself (hotkeys.h); no plugin can bind them. The built-ins bind
+    // F6, F7 and F8 to their commands through sco.ui like any plugin.
+    pf.reservedChords = kReservedChords;
+    pf.nReservedChords = kReservedChordCount;
     g_hostKitStarted = sco::app::Start(pf);
 }
 
@@ -262,25 +278,28 @@ static void InstallQuitHook() {
 }
 
 static void RunFeatureTicks(DWORD now) {
-    // The spawn built-in runs the spawner from its tick subscription; this is the fallback when it
-    // didn't load.
+    // Each built-in runs its feature's work from its tick subscription; these calls are the
+    // fallback for a built-in that didn't load.
     if (!SpawnBuiltinOwnsTick()) ProcessShipMenu(now);
-    ProcessLoadout();
-    ProcessNpcs();
-    ProcessBuild();
+    if (!CrewBuiltinOwnsTick()) ProcessCrew(now);
+    if (!LoadoutBuiltinOwnsTick()) { ProcessLoadout(); ProcessOutfits(); }
+    if (!NpcBuiltinOwnsTick()) ProcessNpcs();
+    if (!BuildBuiltinOwnsTick()) ProcessBuild();
     ProcessCVars();
-    ProcessQuantum();
+    if (!QuantumBuiltinOwnsTick()) { ProcessQuantum(); ProcessTravel(now); }
     ProcessMissions();
-    ProcessContracts();
-    ProcessAmmo();
-    ProcessOutfits();
+    if (!ContractsBuiltinOwnsTick()) ProcessContracts();
+    if (!AmmoBuiltinOwnsTick()) ProcessAmmo();
     TeleportTick(now);
-    ProcessTravel(now);
 }
 
 static void OnMainThreadTick() {
     static bool hostKitStarted = false;
     if (!hostKitStarted) { hostKitStarted = true; StartHostKit(); }
+    // Every pass, not throttled: the menu's frame (its tabs are plugin draws, game thread only)
+    // and the keys bound through sco.ui.
+    Menu_GameThreadFrame();
+    if (g_hostKitStarted) Hotkeys_Poll();
 
     static DWORD last = 0;
     const DWORD now = GetTickCount();

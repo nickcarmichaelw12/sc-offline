@@ -81,6 +81,8 @@ static void __fastcall SetAmmoHook(uintptr_t container, int count, uint8_t notif
     g_setAmmoOrig(container, count, notify);
 }
 
+bool AmmoReady() { return g_setAmmoOrig != nullptr; }
+
 void ResolveAmmoApi(const Section& text) {
     int n = 0;
     uint8_t* fn = FindUniquePattern(text, "40 56 57 41 54 41 57 48 81 EC 88 00 00 00 8B 81 C4 00 00 00 45 33 FF 45 0F B6 E0 48 8B F9", n);

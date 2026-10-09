@@ -5,6 +5,7 @@
 #include "hooks.h"
 #include "menu.h"
 #include <share.h>
+#include <cstring>
 
 using CreateMissionFn = void(__fastcall*)(const void* request);
 static CreateMissionFn g_createMission = nullptr;
@@ -13,9 +14,16 @@ static uintptr_t* g_missionSettings = nullptr;
 
 static void FindMissionLogging(const Section& text, const Section& rdata) {
     const uint8_t* fmt = FindCString(rdata, "[EVMissionManager] Spawn Mission Request - Parsed MissionID: %s (%s)");
-    const uint8_t* lea = fmt ? FindRipLea(text, 0x48, 0x8D, 0x0D, fmt) : nullptr;
-    if (lea && lea - 0x4B >= text.base && BytesMatch(lea - 0x4B, "48 8B 0D ?? ?? ?? ?? 83 79 0C 00"))
-        g_missionSettings = reinterpret_cast<uintptr_t*>(const_cast<uint8_t*>(lea - 0x44 + Rel32(lea - 0x48)));
+    // Every LEA of the format, not just the first: the string has more than one user.
+    uint8_t* const end = text.base + text.size - 7;
+    for (uint8_t* lea = text.base + 0x4B; fmt && lea < end; ++lea) {
+        lea = static_cast<uint8_t*>(memchr(lea, 0x48, static_cast<size_t>(end - lea)));
+        if (!lea) break;
+        if (lea[1] != 0x8D || lea[2] != 0x0D || lea + 7 + Rel32(lea + 3) != fmt) continue;
+        if (!BytesMatch(lea - 0x4B, "48 8B 0D ?? ?? ?? ?? 83 79 0C 00")) continue;
+        g_missionSettings = reinterpret_cast<uintptr_t*>(lea - 0x44 + Rel32(lea - 0x48));
+        return;
+    }
 }
 
 using ConsoleCmdFn = void(__fastcall*)(void* args);
