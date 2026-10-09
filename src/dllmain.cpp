@@ -102,6 +102,7 @@ static bool AntiCheatPresent() {
 
 static bool g_offline = false;
 static bool g_outfitsOk = false;
+static bool g_buildOk = false;   // the free camera build mode uses
 static bool g_signaturesResolved = false;
 static const char* g_quitHookStatus = nullptr;   // "[app] game quit hook: ..." in LogStartup
 
@@ -122,7 +123,7 @@ static void StartOffline() {
         ResolveSpawnApi(g_text, g_rdata);
         g_outfitsOk = ResolveLoadoutApi(g_text, g_rdata);  // outfits ride the gear menu's loader
         ResolveNpcApi(g_text);
-        ResolveBuildApi(g_text, g_rdata);
+        g_buildOk = ResolveBuildApi(g_text, g_rdata);
         ResolveCVarsApi(g_text, g_rdata);
         ResolveMissionsApi(g_text, g_rdata);
         ResolveContractsApi(g_text, g_rdata);
@@ -169,6 +170,7 @@ static void SetFeatureCaps() {
     SetCap("quantum.drive", QuantumDriveReady());
     SetCap("quantum.boost", QuantumBoostReady());
     SetCap("quantum", g_tp.ok);   // the Travel tab's requests all go through teleport
+    SetCap("build", g_buildOk && SpawnerReady());
 }
 
 static const sco::plugins::ScriptRuntime kLua{ sco_lua_load, sco_lua_unload };
@@ -273,7 +275,7 @@ static void RunFeatureTicks(DWORD now) {
     if (!CrewBuiltinOwnsTick()) ProcessCrew(now);
     if (!LoadoutBuiltinOwnsTick()) { ProcessLoadout(); ProcessOutfits(); }
     if (!NpcBuiltinOwnsTick()) ProcessNpcs();
-    ProcessBuild();
+    if (!BuildBuiltinOwnsTick()) ProcessBuild();
     ProcessCVars();
     if (!QuantumBuiltinOwnsTick()) { ProcessQuantum(); ProcessTravel(now); }
     ProcessMissions();
