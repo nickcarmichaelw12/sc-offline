@@ -1,5 +1,6 @@
 #include "hooks.h"
 #include "bridge.h"
+#include "services.h"
 #include "offline_urn.h"
 #include "fleet_response_policy.h"
 #include "teleport.h"
@@ -202,7 +203,7 @@ static void __fastcall Hook_InstanceGroupQuery(uintptr_t self, uintptr_t key, ui
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         hub = 0;
     }
-    if (hub) { g_origInstanceGroupQuery(self, key, out); return; }
+    if (hub && hub != StandInHub()) { g_origInstanceGroupQuery(self, key, out); return; }
     out[1] = out[0];
     static volatile LONG reported = 0;
     if (InterlockedIncrement(&reported) <= 5)

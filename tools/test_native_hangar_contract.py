@@ -96,6 +96,22 @@ def verify(img):
               0x14395F224, 0x1439605C4, 0x1439605F2, 0x14396167B)
     assert all(img.root(a) == starts[0] for a in starts)
     assert img.root(0x143961894) == starts[0]
+    # Elevator destination listing is a separate native request. Both paths
+    # must use the exact ready-future binder exercised by our native test.
+    assert img.root(0x143a3d9b1) == 0x143a3d860
+    assert img.relative(0x143a3bc74, 'E8') == 0x1439fbca0
+    assert img.relative(0x143a3deca, 'E8') == 0x1439fbca0
+    assert img.relative(0x143a3dea6, '48 8D 05') == 0x14397d600
+    assert img.relative(0x14397d61c, 'E8') == 0x1439618a0
+    for offset, pattern in ((0x89, '44 38 60 29'), (0x97, '44 38 60 28'),
+                            (0xa3, '48 81 C7 C8 00 00 00'), (0xb0, '38 47 50')):
+        assert img.read(0x1439fbca0+offset, len(bytes.fromhex(pattern))) == bytes.fromhex(pattern)
+    assert img.read(0x143a3de48, 3) == bytes.fromhex('FF 50 10')
+    assert img.read(0x143a3b89c, 4) == bytes.fromhex('41 8B 58 08')
+    assert img.read(0x143960413, 6) == bytes.fromhex('41 83 7C 24 08 04')
+    assert img.relative(0x143960419, '0F 84') == 0x1439610c5
+    assert img.read(0x147eb4ee0, 9) == b'Elevator\0'
+    assert img.read(0x1486acca0, 21) == b'InstanceManagerDebug\0'
     # The source hook's registration chain and 11-byte stolen prologue.
     source = (Path(__file__).resolve().parents[1]/'src/hooks.cpp').read_text()
     pattern = re.search(r'"fleet manager deliver -> reserved spaceport ATC",\s*'
