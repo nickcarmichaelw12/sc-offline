@@ -5,6 +5,7 @@
 // ProcessNpcs, which reads npcs.txt once you're in the universe, spawns and removes NPCs and
 // checks that removals happened. The mechanics stay in npc.cpp.
 #include "builtins.h"
+#include "tabs.h"
 #include "../menu.h"
 #include "../npc.h"
 #include "../teleport.h"
@@ -75,6 +76,8 @@ sco_result NpcLoad(const sco_api* api, sco_plugin* self) {
         "Removes every NPC you spawned (or moves it far out of range if the game won't delete it)", Clear);
     if (r == SCO_OK) r = api->subscribe(self, "tick", OnTick, nullptr);
     if (r != SCO_OK) return r;   // the host releases what was registered
+    // Its page of the menu (and keys), through sco.ui; the menu shell draws it (tabs.h).
+    RegisterBuiltinTab(api, self, "npc.npcs", "NPCs", kTabNpcs, DrawNpcsTab);
     g_ticking = true;
     return SCO_OK;
 }

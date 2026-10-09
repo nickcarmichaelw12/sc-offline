@@ -125,6 +125,7 @@ add_library(dinput8 SHARED
   src/builtins/loadout_ui.cpp
   src/builtins/quantum_ui.cpp
   src/builtins/spawn_ui.cpp
+  src/builtins/npc_ui.cpp
   # Manifest EnableSegmentHeap.
   src/dinput8.manifest
 )
