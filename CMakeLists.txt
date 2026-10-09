@@ -124,6 +124,7 @@ add_library(dinput8 SHARED
   # Their menu tabs, drawn through sco.ui (src/builtins/tabs.h).
   src/builtins/loadout_ui.cpp
   src/builtins/quantum_ui.cpp
+  src/builtins/spawn_ui.cpp
   # Manifest EnableSegmentHeap.
   src/dinput8.manifest
 )

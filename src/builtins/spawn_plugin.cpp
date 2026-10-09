@@ -5,6 +5,7 @@
 // fault in it disables this plugin instead of the game. The mechanics stay in spawner.cpp; the
 // menu still calls them directly (its tabs move onto commands with the menu, Phase 4 step 4).
 #include "builtins.h"
+#include "tabs.h"
 #include "spawn_service.h"
 #include "../spawner.h"
 #include "../version.h"
@@ -120,6 +121,8 @@ sco_result SpawnLoad(const sco_api* api, sco_plugin* self) {
     if (r == SCO_OK) r = api->provide_service(self, SC_SPAWN_SERVICE_NAME, SC_SPAWN_SERVICE_VERSION, &kService);
     if (r == SCO_OK) r = api->subscribe(self, "tick", OnTick, nullptr);
     if (r != SCO_OK) { g_api = nullptr; g_self = nullptr; return r; }   // the host releases what was registered
+    // Its page of the menu (and keys), through sco.ui; the menu shell draws it (tabs.h).
+    RegisterBuiltinTab(api, self, "spawn.vehicles", "Vehicles", kTabVehicles, DrawVehiclesTab);
     g_ticking = true;
     return SCO_OK;
 }
