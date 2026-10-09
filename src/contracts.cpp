@@ -6,6 +6,7 @@
 #include "menu.h"
 #include "build.h"
 #include "npc.h"
+#include "builtins/builtin_store.h"
 #include <intrin.h>
 #include <share.h>
 #include <cmath>
@@ -1135,15 +1136,103 @@ static int64_t DataFileAmount(const char* nickname) {
     return v > 0 && v < 1000000000000LL ? v : 0;
 }
 
+// The wallet in the contracts built-in's storage (data/storage/contracts.db): "wallet", the balance,
+// and "wallet.txt.time", wallet.txt's last-write time as the mod last wrote it. wallet.txt is still
+// written with every save, because players edit it (docs/features.md). The rule
+// (builtins/builtin_store.h): a wallet.txt whose time differs from the recorded one was changed by
+// hand, so it wins and is imported again; a wallet.txt deleted since the mod wrote it clears the
+// stored balance, so you start with the offline data file's amount as before.
+constexpr const char* kWalletKey = "wallet";
+constexpr const char* kWalletTimeKey = "wallet.txt.time";
+
+static bool WalletInRange(int64_t v) { return v > 0 && v < 1000000000000LL; }
+
+// wallet.txt's balance, or 0 when it's missing or not a balance.
+static int64_t ReadWalletFile(const char* path) {
+    long long v = 0;
+    if (FILE* f = _fsopen(path, "r", _SH_DENYNO)) {
+        if (fscanf_s(f, "%lld", &v) != 1 || !WalletInRange(v)) v = 0;
+        fclose(f);
+    }
+    return v;
+}
+
+// The balance and the file's time in one transaction; fileTime 0 leaves the recorded time.
+static sco_result StoreWallet(int64_t uec, int64_t fileTime) {
+    BuiltinStore& st = g_contractsStore;
+    sco::sdk::StorageTransaction tx(st.S());
+    sco_result r = tx.Result();
+    if (r == SCO_OK) r = st.PutInt(kWalletKey, uec);
+    if (r == SCO_OK && fileTime) r = st.PutInt(kWalletTimeKey, fileTime);
+    if (r == SCO_OK) r = tx.Commit();
+    return r;
+}
+
+// The saved balance (0: none) and where it came from: wallet.txt, or storage when wallet.txt is
+// unchanged since the mod wrote it. No game reads here.
+static int64_t LoadWalletBalance(const char* path, const char*& from) {
+    from = "wallet.txt";
+    const int64_t fileTime = FileWriteTime(path);
+    const int64_t fileValue = fileTime ? ReadWalletFile(path) : 0;
+    BuiltinStore& st = g_contractsStore;
+    if (!st) return fileValue;
+    int64_t seen = 0;
+    const sco_result rs = st.GetInt(kWalletTimeKey, seen);
+    if (rs != SCO_OK && rs != SCO_NOT_FOUND) {
+        st.Failed("reading the wallet", rs, "using wallet.txt");
+        return fileValue;
+    }
+    if (fileTime && (rs == SCO_NOT_FOUND || seen != fileTime)) {   // new to storage, or edited by hand
+        if (!fileValue) return 0;   // not a balance: the offline data file's amount, as before
+        const sco_result r = StoreWallet(fileValue, fileTime);
+        if (r == SCO_OK)
+            Log("[storage] imported wallet.txt into contracts (%lld aUEC)%s", static_cast<long long>(fileValue),
+                rs == SCO_OK ? " (wallet.txt changed since the mod wrote it)" : "");
+        else
+            st.Failed("importing wallet.txt", r, "using wallet.txt");
+        return fileValue;
+    }
+    if (!fileTime) {
+        if (rs == SCO_OK) {   // deleted since the mod wrote it: back to the starting amount
+            sco_result r = st.S().Delete(kWalletKey);
+            if (r == SCO_OK || r == SCO_NOT_FOUND) r = st.S().Delete(kWalletTimeKey);
+            if (r == SCO_OK || r == SCO_NOT_FOUND)
+                Log("[storage] wallet.txt was deleted, so contracts' saved balance is cleared");
+            else
+                st.Failed("clearing the wallet", r, "starting from the offline data file");
+        }
+        return 0;
+    }
+    int64_t stored = 0;
+    const sco_result r = st.GetInt(kWalletKey, stored);
+    if (r != SCO_OK || (stored && !WalletInRange(stored))) {   // 0, like a 0 in wallet.txt: the starting amount
+        st.Failed("reading the balance", r == SCO_OK ? SCO_BAD_ARG : r, "using wallet.txt");
+        return fileValue;
+    }
+    from = "storage";
+    return stored;
+}
+
+// wallet.txt and storage; true when either has the balance.
+static bool SaveWalletBalance(const char* path, int64_t uec) {
+    bool written = false;
+    if (FILE* f = _fsopen(path, "w", _SH_DENYWR)) {
+        fprintf(f, "%lld\n", static_cast<long long>(uec));
+        written = fclose(f) == 0;
+    }
+    BuiltinStore& st = g_contractsStore;
+    if (!st) return written;
+    // Not written: keep the old time, so the stored balance (newer) wins over the old file.
+    const sco_result r = StoreWallet(uec, written ? FileWriteTime(path) : 0);
+    if (r != SCO_OK) st.Failed("saving the wallet", r, written ? "wallet.txt has it" : "wallet.txt couldn't be written either");
+    return written || r == SCO_OK;
+}
+
 static void RestoreWallet() {
     char path[MAX_PATH];
     if (g_walletSaved >= 0 || !WalletPath(path)) return;
-    g_walletSaved = 0;
-    if (FILE* f = _fsopen(path, "r", _SH_DENYNO)) {
-        long long v = 0;
-        if (fscanf_s(f, "%lld", &v) == 1 && v > 0 && v < 1000000000000LL) g_walletSaved = v;
-        fclose(f);
-    }
+    const char* from = "wallet.txt";
+    g_walletSaved = LoadWalletBalance(path, from);
     if (g_walletSaved <= 0) {
         const int64_t start = DataFileAmount("default_1");
         if (start > 0) {
@@ -1155,7 +1244,7 @@ static void RestoreWallet() {
     if (!wallet || !g_updateBalance) return;
     const int64_t now = Rd<int64_t>(wallet + kWalletUec);
     if (g_walletSaved > 0 && g_walletSaved != now) g_updateBalance(wallet, 1, g_walletSaved - now);
-    Log("[contracts] wallet: %lld aUEC from wallet.txt (was %lld, now %lld)", static_cast<long long>(g_walletSaved),
+    Log("[contracts] wallet: %lld aUEC from %s (was %lld, now %lld)", static_cast<long long>(g_walletSaved), from,
         static_cast<long long>(now), static_cast<long long>(Rd<int64_t>(wallet + kWalletUec)));
 }
 
@@ -1165,11 +1254,7 @@ static void SaveWallet() {
     if (!wallet || !WalletPath(path)) return;
     const int64_t uec = Rd<int64_t>(wallet + kWalletUec);
     if (uec == g_walletSaved || uec < 0 || uec >= 1000000000000LL) return;
-    if (FILE* f = _fsopen(path, "w", _SH_DENYWR)) {
-        fprintf(f, "%lld\n", static_cast<long long>(uec));
-        fclose(f);
-        g_walletSaved = uec;
-    }
+    if (SaveWalletBalance(path, uec)) g_walletSaved = uec;
 }
 
 static bool PlayerDataPath(const char* nickname, char path[MAX_PATH]) {

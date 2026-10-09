@@ -2,10 +2,12 @@
 //
 // The built-in's tick subscription runs ProcessContracts: listing contracts in the mobiGlas 15 s
 // after you spawn, building and running the missions you accept, paying rewards, and restoring
-// and saving the wallet (data/wallet.txt, as before). contracts.status reports where that stands,
-// gated on the "contracts" capability (the mission system found). The mechanics, the mission
-// detours, the wallet and its file stay in contracts.cpp.
+// and saving the wallet (the built-in's storage, data/storage/contracts.db, opened here; and
+// data/wallet.txt, which players may edit). contracts.status reports where that stands, gated on
+// the "contracts" capability (the mission system found). The mechanics, the mission detours, the
+// wallet and its file stay in contracts.cpp.
 #include "builtins.h"
+#include "builtin_store.h"
 #include "../contracts.h"
 #include "../teleport.h"
 #include "../version.h"
@@ -45,12 +47,16 @@ sco_result ContractsLoad(const sco_api* api, sco_plugin* self) {
         "How many contracts are known, offered and running, and your wallet's balance", Status);
     if (r == SCO_OK) r = api->subscribe(self, "tick", OnTick, nullptr);
     if (r != SCO_OK) return r;   // the host releases what was registered
+    g_contractsStore.Open(api, self);   // before the first tick, which restores the wallet
     g_ticking = true;
     return SCO_OK;
 }
 
 // A crash leaves g_ticking set, so dllmain doesn't take ProcessContracts back.
-void ContractsUnload() { g_ticking = false; }
+void ContractsUnload() {
+    g_contractsStore.Close();
+    g_ticking = false;
+}
 
 }  // namespace
 
