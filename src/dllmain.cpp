@@ -168,6 +168,7 @@ static void SetFeatureCaps() {
     SetCap("ammo", AmmoReady());
     SetCap("quantum.drive", QuantumDriveReady());
     SetCap("quantum.boost", QuantumBoostReady());
+    SetCap("quantum", g_tp.ok);   // the Travel tab's requests all go through teleport
 }
 
 static const sco::plugins::ScriptRuntime kLua{ sco_lua_load, sco_lua_unload };
@@ -274,12 +275,11 @@ static void RunFeatureTicks(DWORD now) {
     if (!NpcBuiltinOwnsTick()) ProcessNpcs();
     ProcessBuild();
     ProcessCVars();
-    ProcessQuantum();
+    if (!QuantumBuiltinOwnsTick()) { ProcessQuantum(); ProcessTravel(now); }
     ProcessMissions();
     ProcessContracts();
     if (!AmmoBuiltinOwnsTick()) ProcessAmmo();
     TeleportTick(now);
-    ProcessTravel(now);
 }
 
 static void OnMainThreadTick() {
