@@ -293,14 +293,6 @@ static void DescribeChain(const Spot& s, char* out, size_t n) {
 static Spot  g_spot;
 static bool  g_autoTeleportPending = false;
 static DWORD g_playerReadySince = 0;
-static bool  g_keyWasDown[2] = {};
-
-static bool KeyPressed(int vk, bool& wasDown) {
-    const bool down = (GetAsyncKeyState(vk) & 0x8000) != 0;
-    const bool pressed = down && !wasDown;
-    wasDown = down;
-    return pressed;
-}
 
 static Spot  g_refineSpot;     // the spot being refined (F8's or a bookmark's)
 static int   g_refineLevel = 0;
@@ -461,10 +453,7 @@ void LoadSavedSpot(bool startingOverDaymar) {
 }
 
 void TeleportTick(DWORD now) {
-    const bool focus = GameHasFocus();
-    if (KeyPressed(VK_F7, g_keyWasDown[0]) && focus) TeleportSaveHotkey();
-    if (KeyPressed(VK_F8, g_keyWasDown[1]) && focus) TeleportGoHotkey();
-
+    // F7 and F8 are the teleport built-in's hotkeys (sco.ui), dispatched by hotkeys.cpp.
     if (g_autoTeleportPending) {
         uintptr_t actor, entity;
         bool ready = false;

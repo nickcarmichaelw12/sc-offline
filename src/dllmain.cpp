@@ -19,6 +19,7 @@
 #include "services.h"
 #include "outfits.h"
 #include "menu.h"
+#include "hotkeys.h"
 #include "builtins/builtins.h"
 #include "sco/app.h"
 #include "sco/caps.h"
@@ -198,6 +199,10 @@ static void StartHostKit() {
     // image stays nullptr: the features resolve their addresses in DllMain (StartOffline), before
     // this thread exists, so the signature rows were resolved there and reported by LogStartup.
     pf.setCapabilities = SetFeatureCaps;
+    // The keys sc-offline handles itself (hotkeys.h); no plugin can bind them. The built-ins bind
+    // F6, F7 and F8 to their commands through sco.ui like any plugin.
+    pf.reservedChords = kReservedChords;
+    pf.nReservedChords = kReservedChordCount;
     g_hostKitStarted = sco::app::Start(pf);
 }
 
@@ -288,8 +293,10 @@ static void RunFeatureTicks(DWORD now) {
 static void OnMainThreadTick() {
     static bool hostKitStarted = false;
     if (!hostKitStarted) { hostKitStarted = true; StartHostKit(); }
-    // Every pass, not throttled: the menu's frame (its tabs are plugin draws, game thread only).
+    // Every pass, not throttled: the menu's frame (its tabs are plugin draws, game thread only)
+    // and the keys bound through sco.ui.
     Menu_GameThreadFrame();
+    if (g_hostKitStarted) Hotkeys_Poll();
 
     static DWORD last = 0;
     const DWORD now = GetTickCount();

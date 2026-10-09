@@ -110,6 +110,7 @@ add_library(dinput8 SHARED
   src/services.cpp
   src/outfits.cpp
   src/menu.cpp
+  src/hotkeys.cpp
   src/travel.cpp
   # Built-in plugins (src/builtins/builtins.h).
   src/builtins/teleport_plugin.cpp
@@ -125,8 +126,8 @@ add_library(dinput8 SHARED
   src/builtins/loadout_ui.cpp
   src/builtins/quantum_ui.cpp
   src/builtins/spawn_ui.cpp
-  src/builtins/npc_ui.cpp
   src/builtins/crew_ui.cpp
+  src/builtins/npc_ui.cpp
   src/builtins/build_ui.cpp
   # Manifest EnableSegmentHeap.
   src/dinput8.manifest
