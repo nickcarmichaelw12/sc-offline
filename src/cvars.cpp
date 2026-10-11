@@ -177,6 +177,24 @@ static void KeepSettingsOn() {
     }
 }
 
+// Explicit, read-only snapshot through the existing console accessor. These names
+// occur in the supplied 4.10.193.11644 executable; absence on another build is
+// reported, never substituted with an offset or treated as a zero value.
+static void ReportAudioDiagnostics() {
+    static unsigned reports = 0; // game thread only; bound even repeated requests
+    if (reports >= 5) return;
+    ++reports;
+    Log("[audio-diag] snapshot %u/5; read-only engine switches (not mixer levels)", reports);
+    static const char* const names[] = {
+        "sys_audio_disable", "sys_cig_audio_enable", "s_SubmixRecordersMuteOutput"
+    };
+    for (const char* name : names) {
+        float value = 0.0f;
+        if (GetCVarNow(name, value)) Log("[audio-diag] %s = %g", name, value);
+        else Log("[audio-diag] %s unavailable (console, lookup or read failed)", name);
+    }
+}
+
 void ProcessCVars() {
     KeepSettingsOn();
     {
@@ -191,6 +209,10 @@ void ProcessCVars() {
         AcquireSRWLockExclusive(&g_lock);
         strcpy_s(cmd, g_command);
         ReleaseSRWLockExclusive(&g_lock);
+        if (strcmp(cmd, "sc_audio_diag") == 0) {
+            ReportAudioDiagnostics();
+            return;
+        }
         if (Execute(cmd)) Log("[cvars] console: %s", cmd);
         else              Log("[cvars] console unavailable: %s", cmd);
     }
